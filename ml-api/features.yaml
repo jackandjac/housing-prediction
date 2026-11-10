@@ -1,0 +1,67 @@
+# Feature schema: the single source of truth for the model's inputs.
+#
+# It drives:
+#   * validation of uploaded training CSVs
+#   * the /predict request schema shown in Swagger
+#   * the feature list recorded with every trained model
+#
+# To add a new field, append an entry below and restart the API.
+# Use `required: false` while older training files don't have the column yet.
+# Training then uses the field only when the uploaded CSV contains it, and
+# models trained without it keep working.
+#
+# Keys per feature:
+#   name        column name in the CSV and field name in the API
+#   type        float | int
+#   min / max   allowed range (inclusive), optional
+#   required    must be present in every training CSV (default: true)
+#   example     value used in Swagger examples
+#   description shown in Swagger
+
+target:
+  name: price
+  min: 0
+
+features:
+  - name: square_footage
+    type: float
+    min: 100
+    max: 20000
+    example: 1550
+    description: Interior living area in square feet
+  - name: bedrooms
+    type: int
+    min: 0
+    max: 20
+    example: 3
+    description: Number of bedrooms
+  - name: bathrooms
+    type: float
+    min: 0
+    max: 20
+    example: 2
+    description: Number of bathrooms (half baths allowed, e.g. 2.5)
+  - name: year_built
+    type: int
+    min: 1800
+    max: 2100
+    example: 1997
+    description: Year the house was built
+  - name: lot_size
+    type: float
+    min: 0
+    max: 1000000
+    example: 6800
+    description: Lot size in square feet
+  - name: distance_to_city_center
+    type: float
+    min: 0
+    max: 500
+    example: 4.1
+    description: Distance to the city center in miles
+  - name: school_rating
+    type: float
+    min: 0
+    max: 10
+    example: 7.6
+    description: Local school rating from 0 to 10

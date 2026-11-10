@@ -1,0 +1,6 @@
+**
+!ml-api/requirements.txt
+!ml-api/app/**
+!ml-api/features.yaml
+!data/House_Price_Dataset.csv
+**/__pycache__

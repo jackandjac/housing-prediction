@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# Runtime data written by ml-api (models, uploads, job DB)
+ml-api/var/
+
+# Interview brief: not part of the source
+*.pdf
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/
