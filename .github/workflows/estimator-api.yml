@@ -17,13 +17,13 @@ env:
 
 jobs:
   test:
-    # Pinned: MongoDB 8 refuses to start on Linux 6.19+ kernels (SERVER-121912), which
-    # ubuntu-latest (Ubuntu 26) ships. Revisit once a fixed mongo image is released.
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     services:
       # Tests run against a throwaway MongoDB, never the Atlas cluster.
       mongo:
-        image: mongo:8
+        # MongoDB 8.x refuses to start on the runners' Linux 6.19+ kernels (SERVER-121912 /
+        # SERVER-136848); 7.0 has no such check. The app only uses basic CRUD, so tests are unaffected.
+        image: mongo:7.0
         ports: ["27017:27017"]
         options: >-
           --health-cmd "mongosh --quiet --eval 'db.runCommand({ping:1})'"
@@ -50,15 +50,15 @@ jobs:
 
   image:
     needs: test
-    # Pinned: MongoDB 8 refuses to start on Linux 6.19+ kernels (SERVER-121912), which
-    # ubuntu-latest (Ubuntu 26) ships. Revisit once a fixed mongo image is released.
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
     services:
       mongo:
-        image: mongo:8
+        # MongoDB 8.x refuses to start on the runners' Linux 6.19+ kernels (SERVER-121912 /
+        # SERVER-136848); 7.0 has no such check. The app only uses basic CRUD, so tests are unaffected.
+        image: mongo:7.0
         ports: ["27017:27017"]
     steps:
       - uses: actions/checkout@v4
