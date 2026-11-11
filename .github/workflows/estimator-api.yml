@@ -17,7 +17,9 @@ env:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # Pinned: MongoDB 8 refuses to start on Linux 6.19+ kernels (SERVER-121912), which
+    # ubuntu-latest (Ubuntu 26) ships. Revisit once a fixed mongo image is released.
+    runs-on: ubuntu-24.04
     services:
       # Tests run against a throwaway MongoDB, never the Atlas cluster.
       mongo:
@@ -48,7 +50,9 @@ jobs:
 
   image:
     needs: test
-    runs-on: ubuntu-latest
+    # Pinned: MongoDB 8 refuses to start on Linux 6.19+ kernels (SERVER-121912), which
+    # ubuntu-latest (Ubuntu 26) ships. Revisit once a fixed mongo image is released.
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       packages: write
