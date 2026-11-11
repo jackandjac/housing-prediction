@@ -15,3 +15,17 @@ ml-api/var/
 .DS_Store
 .idea/
 .vscode/
+
+# Node / Next.js
+node_modules/
+.next/
+next-env.d.ts
+*.tsbuildinfo
+
+# Java / Maven
+target/
+
+# Local secrets
+.env
+.env.*
+!.env.example

@@ -1,0 +1,4 @@
+**
+!estimator-api/requirements.txt
+!estimator-api/app/**
+**/__pycache__
