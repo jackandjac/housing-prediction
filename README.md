@@ -5,7 +5,9 @@ Monorepo for the full-stack interview tasks.
 | Path | What | Status |
 |---|---|---|
 | [`ml-api/`](ml-api/) | **Task 1**: FastAPI + scikit-learn regression API with async training, a model registry and webhooks | ✅ |
-| `estimator-api/`, `market-api/`, `portal/` | **Task 2**: Next.js portal with Python and Java backends | planned |
+| [`portal/`](portal/) | **Task 2**: Next.js 16 portal hosting both apps | ✅ |
+| [`estimator-api/`](estimator-api/) | **Task 2, App 1** backend: FastAPI + MongoDB | ✅ |
+| [`market-api/`](market-api/) | **Task 2, App 2** backend: Java 21 + Spring Boot 3.4.4 | ✅ |
 | [`data/`](data/) | `House_Price_Dataset.csv` (training data) and `Test_Data_For_Prediction.csv` (unlabelled rows to predict) | |
 
 ---
@@ -29,15 +31,7 @@ On first start, the API trains a Ridge model (alpha=1) from the bundled `House_P
 
 #### Live demo in GitHub Codespaces
 
-1. On the repo page click **Code → Codespaces → Create codespace on main**.
-2. Wait 2–3 minutes. The first start installs dependencies, then `.devcontainer/start-api.sh` starts the API, and Swagger opens in a new tab.
-3. To share it, open the **PORTS** tab, right-click port **8000**, and choose **Port Visibility → Public**. The start script tries to do this for you. The URL looks like `https://<codespace-name>-8000.app.github.dev/docs`.
-
-Notes:
-- The Codespace stops after 30 minutes without activity. You can raise the timeout to 4 hours at github.com/settings/codespaces.
-- Reopening a stopped Codespace restarts the API automatically, with trained models kept.
-- Logs: `tail -f /tmp/ml-api.log`. Restart by hand: `bash .devcontainer/start-api.sh`.
-- For the webhook demo, run `python ml-api/scripts/webhook_receiver.py` in a terminal and use `callback_url=http://localhost:9000/hook`.
+The Codespace runs the whole stack (all four services). See [Live demo](#live-demo-in-github-codespaces-1) under Task 2.
 
 <details>
 <summary>Without Docker</summary>
@@ -129,3 +123,93 @@ On every push or PR that touches `ml-api/` or `data/`, [`.github/workflows/ml-ap
 1. ruff (lint and format checks) and pytest on Python 3.12.
 2. A Docker build, then a smoke test against the running container: health, predict, and a training upload.
 3. On `main` only: a multi-arch (amd64 + arm64) image pushed to `ghcr.io/jackandjac/housing-prediction-ml-api`, tagged `latest` and with the short commit SHA.
+
+---
+
+## Task 2: Multi-application portal
+
+```
+Browser ──► portal (Next.js :3000)
+              │  server components + route handlers call the backends server-side;
+              │  the browser never talks to a backend directly (no CORS, backend URLs stay private)
+              ├──► estimator-api (FastAPI :8001) ──► MongoDB Atlas
+              │          └──────────────┐
+              └──► market-api (Spring Boot :8080)
+                         └──────────────┴──► ml-api (Task 1, :8000)
+```
+
+### Run everything
+
+```bash
+# Mac (MONGODB_URI comes from the Keychain, see scripts/with-secrets.sh)
+scripts/start-all.sh                 # builds what's missing, starts all four services, waits until healthy
+scripts/start-all.sh stop
+
+# or with Docker
+scripts/with-secrets.sh docker compose up --build
+```
+
+Open http://localhost:3000. Swagger: ml-api `:8000/docs`, estimator-api `:8001/docs`, market-api `:8080/swagger-ui.html`.
+
+#### Live demo in GitHub Codespaces
+
+1. Add `MONGODB_URI` as a Codespaces secret for this repository (Settings → Secrets and variables → Codespaces), and allow access from anywhere in MongoDB Atlas *Network Access* (Codespaces have no fixed IP).
+2. **Code → Codespaces → Create codespace on main.** The first start takes about 5 minutes: it installs Python, Node and Java dependencies and builds the portal and the jar. After that, `scripts/start-all.sh` starts everything and the portal opens on port 3000.
+3. Port 3000 is made public so interviewers can open it without a GitHub login. The backend ports stay private. If making it public fails, use **PORTS → right-click 3000 → Port Visibility → Public**.
+
+Notes:
+- The devcontainer asks for a 4-core machine, which uses free Codespace hours twice as fast as 2 cores.
+- Logs are in `/tmp/housing-logs/`. Restart with `scripts/start-all.sh stop && scripts/start-all.sh`. After pulling new portal code, use `REBUILD=1 scripts/start-all.sh`.
+
+### App 1: Property Value Estimator (`/estimator`, Python backend)
+
+| Requirement | Where |
+|---|---|
+| Form with every model field | The form is **generated from ml-api `GET /features`** (through `estimator-api /form-schema`), so a field added to `features.yaml` appears automatically. `components/estimator/EstimateForm.tsx` |
+| Client-side validation | zod rules built from the same schema the server validates against (`lib/estimate-schema.ts`, unit-tested); server field errors are mapped back onto the inputs |
+| Results as a table and a chart | Inputs vs market average with each feature's dollar effect, plus a contribution bar chart. The baseline plus the contributions adds up exactly to the prediction. |
+| History | Stored in MongoDB by estimator-api. First page rendered on the server, then paged with TanStack Query; optimistic delete |
+| Comparison | Pick 2–4 estimates (selection kept in a zustand store, persisted in the browser) → `/estimator/compare?ids=…`: price chart plus a feature table with per-feature effects |
+| Backend | `POST /estimates` validates against the live model schema, calls ml-api, stores the estimate and its breakdown. Errors are field-level 422s, 503s when ml-api or MongoDB is down, and `/health` reports `degraded` instead of crashing |
+
+### App 2: Property Market Analysis (`/market`, Java backend)
+
+| Requirement | Where |
+|---|---|
+| Interactive dashboard | KPI tiles, prices by segment (bedrooms, bathrooms, decade, school or distance band), price histogram, correlation with price, model-vs-actual scatter, and live cache statistics |
+| Segment filters | Range filters on any column (`<column>.min/.max`) kept **in the URL**, so a filtered view can be shared or bookmarked; applied in a React transition |
+| What-if tool | `/market/what-if`: vary one feature over a range; the Java service makes one batch call to ml-api. Results are cached per active model, and the UI shows "Served from cache" |
+| CSV / PDF export | Generated by Java (commons-csv, OpenPDF) with the current filters and sort, streamed through the portal |
+| Responsive sortable table | `/market/properties`: server-side sort and paging (`aria-sort`), sticky first column, horizontal scroll on phones |
+| Backend | REST endpoints, aggregate statistics, ml-api integration, Caffeine caches with recorded statistics (`GET /api/market/cache-stats`). Model-dependent cache keys include the active model id, so switching models never serves stale results |
+
+### Next.js implementation notes
+
+- **Next.js 16 App Router** with Cache Components and Partial Prefetching (the `create-next-app` defaults). Every page is a static shell, and backend data streams in through `<Suspense>`, so `next build` needs no running backend. CI builds the portal with every backend unreachable.
+- **Server components** do the initial data loading, with parallel `Promise.all` fetches on the dashboard. **Client components** handle forms, filters, charts and tables.
+- **State:**
+  - server state: TanStack Query;
+  - shareable view state (filters, sort, page, grouping): the URL;
+  - per-browser state (the comparison selection): zustand with persistence;
+  - form state: react-hook-form with zod.
+- **Custom hooks:** `useCreateEstimate`, `useEstimateHistory`, `useDeleteEstimate`, `useCompareSelection`, `useMarketFilters`, `useWhatIf`.
+- **Backend-for-frontend:** `app/api/{estimator,market}/[...path]` forward only allow-listed paths, normalise errors and stream downloads. Both backends' error formats (FastAPI and Spring `ProblemDetail`) become one `ApiError` (`lib/errors.ts`).
+- **Loading and errors:** `loading.tsx`, `error.tsx` (with `retry`) and `not-found.tsx` at the root and in each app, plus `global-error.tsx`. A failing panel, such as model fit when ml-api is down, shows an inline message instead of breaking the page.
+- **Design system:** one token set in `app/globals.css`, with light and dark themes. Each app gets its own accent through `data-app`, on shared components in `components/ui`.
+- **Accessibility:**
+  - labelled inputs, with errors linked through `aria-describedby`;
+  - `aria-current` navigation and `aria-sort` table headers;
+  - a skip link and visible focus rings;
+  - charts with text summaries;
+  - motion that respects `prefers-reduced-motion`.
+- **Transitions:** pages fade in via `template.tsx`, and filter changes keep the current view visible while new data loads.
+
+### Tests and CI
+
+| Service | Tests | CI (`.github/workflows/`) |
+|---|---|---|
+| ml-api | pytest (35) | lint, test, container smoke test, multi-arch image |
+| estimator-api | pytest against a real MongoDB (a service container in CI, a throwaway collection locally), ml-api faked with `httpx.MockTransport` | same |
+| market-api | JUnit 5 + MockMvc + `MockRestServiceServer` (expected statistics checked against pandas) | `mvn verify`, container smoke test, image |
+| portal | ESLint, TypeScript, vitest (form schema and URL filters), production build with no backends | same, plus a container smoke test |
+

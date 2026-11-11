@@ -1,0 +1,150 @@
+@import "tailwindcss";
+
+/*
+ * Design tokens. One palette for the whole portal; each app sets its own accent
+ * through [data-app] so the two apps feel related but distinguishable.
+ * Light values first, dark values under prefers-color-scheme.
+ */
+:root {
+  --bg: #f5f6f8;
+  --surface: #ffffff;
+  --surface-2: #eef0f4;
+  --fg: #151a23;
+  --muted: #586174;
+  --line: #dce0e7;
+  --accent: #1d5bd8;
+  --accent-soft: #e5edfc;
+  --accent-fg: #ffffff;
+  --positive: #157347;
+  --positive-soft: #e3f3ea;
+  --negative: #b4232f;
+  --negative-soft: #fbe6e8;
+  --warning: #8a5a00;
+  --warning-soft: #fdf2d6;
+  --chart-1: var(--accent);
+  --chart-2: #8b93a5;
+  --focus: #1d5bd8;
+}
+
+[data-app="estimator"] {
+  --accent: #0b7a6d;
+  --accent-soft: #e0f2ef;
+  --chart-1: #0b7a6d;
+  --focus: #0b7a6d;
+}
+
+[data-app="market"] {
+  --accent: #5b45c9;
+  --accent-soft: #ece8fb;
+  --chart-1: #5b45c9;
+  --focus: #5b45c9;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f1218;
+    --surface: #171b23;
+    --surface-2: #1e2430;
+    --fg: #e6e9ef;
+    --muted: #9aa3b5;
+    --line: #2a3140;
+    --accent: #7ea6ff;
+    --accent-soft: #1d2843;
+    --accent-fg: #0f1218;
+    --positive: #5fd39a;
+    --positive-soft: #15301f;
+    --negative: #ff8a93;
+    --negative-soft: #3a1a1e;
+    --warning: #f3c461;
+    --warning-soft: #3a2e12;
+    --chart-2: #6b7385;
+    --focus: #7ea6ff;
+  }
+  [data-app="estimator"] {
+    --accent: #4fd1bd;
+    --accent-soft: #123430;
+    --chart-1: #4fd1bd;
+    --focus: #4fd1bd;
+  }
+  [data-app="market"] {
+    --accent: #a897ff;
+    --accent-soft: #261f45;
+    --chart-1: #a897ff;
+    --focus: #a897ff;
+  }
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --color-line: var(--line);
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-fg: var(--accent-fg);
+  --color-positive: var(--positive);
+  --color-positive-soft: var(--positive-soft);
+  --color-negative: var(--negative);
+  --color-negative-soft: var(--negative-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, "SF Mono", Menlo, monospace;
+  --radius-card: 0.75rem;
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+}
+
+/* Visible keyboard focus everywhere (WCAG 2.4.7). */
+:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Page transition used by app/template.tsx. */
+@keyframes page-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.page-enter {
+  animation: page-in 220ms ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .page-enter {
+    animation: none;
+  }
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+}
+
+/* Recharts text follows the theme. */
+.recharts-text,
+.recharts-cartesian-axis-tick-value {
+  fill: var(--muted);
+  font-size: 12px;
+}
+.recharts-cartesian-grid line {
+  stroke: var(--line);
+}

@@ -1,39 +1,21 @@
 #!/usr/bin/env bash
-# Starts the ML API in the background (logs: /tmp/ml-api.log) and waits until it is healthy.
-# Runs on every Codespace start; safe to run again by hand.
+# Runs on every Codespace start: starts all services and makes the portal reachable for interviewers.
 set -euo pipefail
-
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PORT="${PORT:-8000}"
-LOG=/tmp/ml-api.log
 
-if curl -fs "http://127.0.0.1:${PORT}/health" > /dev/null 2>&1; then
-  echo "ML API already running on port ${PORT}"
-else
-  cd "$ROOT/ml-api"
-  # setsid + nohup: keep the server alive after this start hook exits.
-  setsid nohup python -m uvicorn app.main:create_app --factory \
-    --host 0.0.0.0 --port "$PORT" --workers 1 > "$LOG" 2>&1 < /dev/null &
-
-  for _ in $(seq 1 60); do
-    curl -fs "http://127.0.0.1:${PORT}/health" > /dev/null 2>&1 && break
-    sleep 1
-  done
-  if ! curl -fs "http://127.0.0.1:${PORT}/health" > /dev/null 2>&1; then
-    echo "ML API did not become healthy; see $LOG" >&2
-    tail -n 30 "$LOG" >&2 || true
-    exit 1
-  fi
-  echo "ML API started on port ${PORT} (logs: $LOG)"
+if [[ -z "${MONGODB_URI:-}" ]]; then
+  echo "MONGODB_URI is not set. Add it as a Codespaces secret for this repository, then rebuild the Codespace." >&2
+  exit 1
 fi
 
-# Make the port reachable without a GitHub login, for interviewers. Best effort:
-# if this is refused, set it by hand in the PORTS tab (right-click > Port Visibility > Public).
+bash "$ROOT/scripts/start-all.sh"
+
+# Only the portal is made public; the backends stay private (the portal calls them on localhost).
 if [[ -n "${CODESPACE_NAME:-}" ]]; then
-  if gh codespace ports visibility "${PORT}:public" -c "$CODESPACE_NAME" > /dev/null 2>&1; then
-    echo "Port ${PORT} is public"
+  if gh codespace ports visibility 3000:public -c "$CODESPACE_NAME" > /dev/null 2>&1; then
+    echo "Port 3000 is public"
   else
-    echo "Could not make port ${PORT} public automatically; set it in the PORTS tab."
+    echo "Could not make port 3000 public automatically; set it in the PORTS tab (right-click > Port Visibility > Public)."
   fi
-  echo "Swagger: https://${CODESPACE_NAME}-${PORT}.${GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN:-app.github.dev}/docs"
+  echo "Portal: https://${CODESPACE_NAME}-3000.${GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN:-app.github.dev}"
 fi

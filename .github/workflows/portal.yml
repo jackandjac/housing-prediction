@@ -1,0 +1,94 @@
+name: portal
+
+on:
+  push:
+    branches: [main]
+    paths: ["portal/**", ".github/workflows/portal.yml"]
+  pull_request:
+    paths: ["portal/**", ".github/workflows/portal.yml"]
+  workflow_dispatch:
+
+concurrency:
+  group: portal-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/housing-prediction-portal
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: portal
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: portal/package-lock.json
+      - run: npm ci
+      - name: Lint
+        run: npm run lint
+      - name: Type check
+        run: npm run typecheck
+      - name: Unit tests
+        run: npm test
+      - name: Build
+        run: npx next build
+
+  image:
+    needs: check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,format=short
+            type=ref,event=pr
+      - name: Build (amd64) for smoke test
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: portal/Dockerfile
+          load: true
+          tags: portal:smoke
+          cache-from: type=gha,scope=portal
+          cache-to: type=gha,mode=max,scope=portal
+      - name: Smoke test container
+        run: |
+          docker run -d --name portal -p 3000:3000 portal:smoke
+          for i in $(seq 1 30); do curl -fs http://localhost:3000/ > /dev/null && break; sleep 1; done
+          # Backends are absent: pages must still render and report the services as unreachable.
+          curl -fs http://localhost:3000/ | grep -q "Unreachable"
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3000/api/estimator/estimates)" = 502
+          docker logs portal | tail -20
+      - name: Build and push (amd64 + arm64)
+        if: github.event_name != 'pull_request'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: portal/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=portal
+          cache-to: type=gha,mode=max,scope=portal

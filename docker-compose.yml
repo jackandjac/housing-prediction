@@ -1,0 +1,49 @@
+# Whole stack: ML API + estimator (Python) + market (Java) + portal (Next.js).
+#
+#   scripts/with-secrets.sh docker compose up --build     # Mac: MONGODB_URI from the Keychain
+#   docker compose up --build                             # MONGODB_URI already in the environment
+#
+# Open http://localhost:3000. Host ports can be changed with ML_PORT, ESTIMATOR_PORT, MARKET_PORT, PORTAL_PORT.
+name: housing-prediction
+
+services:
+  ml-api:
+    build: { context: ., dockerfile: ml-api/Dockerfile }
+    image: ghcr.io/jackandjac/housing-prediction-ml-api:latest
+    ports: ["${ML_PORT:-8000}:8000"]
+    volumes: [ml-data:/data]
+
+  estimator-api:
+    build: { context: ., dockerfile: estimator-api/Dockerfile }
+    image: ghcr.io/jackandjac/housing-prediction-estimator-api:latest
+    environment:
+      MONGODB_URI: ${MONGODB_URI:?MONGODB_URI must be set (see scripts/with-secrets.sh)}
+      MONGODB_COLLECTION: ${MONGODB_COLLECTION:-estimates}
+      ML_API_URL: http://ml-api:8000
+    ports: ["${ESTIMATOR_PORT:-8001}:8001"]
+    depends_on:
+      ml-api: { condition: service_healthy }
+
+  market-api:
+    build: { context: ., dockerfile: market-api/Dockerfile }
+    image: ghcr.io/jackandjac/housing-prediction-market-api:latest
+    environment:
+      ML_API_URL: http://ml-api:8000
+    ports: ["${MARKET_PORT:-8080}:8080"]
+    depends_on:
+      ml-api: { condition: service_healthy }
+
+  portal:
+    build: { context: ., dockerfile: portal/Dockerfile }
+    image: ghcr.io/jackandjac/housing-prediction-portal:latest
+    environment:
+      ESTIMATOR_API_URL: http://estimator-api:8001
+      MARKET_API_URL: http://market-api:8080
+      ML_API_URL: http://ml-api:8000
+    ports: ["${PORTAL_PORT:-3000}:3000"]
+    depends_on:
+      estimator-api: { condition: service_healthy }
+      market-api: { condition: service_healthy }
+
+volumes:
+  ml-data:
