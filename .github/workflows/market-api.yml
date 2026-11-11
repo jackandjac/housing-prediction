@@ -1,0 +1,95 @@
+name: market-api
+
+on:
+  push:
+    branches: [main]
+    paths: ["market-api/**", "data/**", ".github/workflows/market-api.yml"]
+  pull_request:
+    paths: ["market-api/**", "data/**", ".github/workflows/market-api.yml"]
+  workflow_dispatch:
+
+concurrency:
+  group: market-api-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/housing-prediction-market-api
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: market-api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+      - name: Test and package
+        run: ./mvnw -B verify
+      - name: Test report
+        if: always()
+        run: |
+          grep -h "<testsuite " target/surefire-reports/*.xml \
+            | sed -E 's/.*name="([^"]+)".*tests="([0-9]+)".*failures="([0-9]+)".*errors="([0-9]+)".*/\1: \2 tests, \3 failures, \4 errors/' \
+            >> "$GITHUB_STEP_SUMMARY" || true
+
+  image:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,format=short
+            type=ref,event=pr
+      - name: Build (amd64) for smoke test
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: market-api/Dockerfile
+          load: true
+          tags: market-api:smoke
+          cache-from: type=gha,scope=market-api
+          cache-to: type=gha,mode=max,scope=market-api
+      - name: Smoke test container
+        run: |
+          docker run -d --name market -p 8080:8080 market-api:smoke
+          for i in $(seq 1 60); do curl -fs http://localhost:8080/actuator/health && break; sleep 1; done
+          echo
+          curl -fs "http://localhost:8080/api/market/summary?bedrooms.min=3" | grep -q '"count":37'
+          curl -fs -o report.pdf http://localhost:8080/api/market/export.pdf && head -c 5 report.pdf | grep -q '%PDF-'
+          # ml-api is absent here: model-based endpoints must fail cleanly with 503.
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/api/market/model-fit)" = 503
+          docker logs market | tail -20
+      - name: Build and push (amd64 + arm64)
+        if: github.event_name != 'pull_request'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: market-api/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=market-api
+          cache-to: type=gha,mode=max,scope=market-api

@@ -1,0 +1,33 @@
+server:
+  port: ${PORT:8080}
+
+spring:
+  application:
+    name: market-api
+  mvc:
+    problemdetails:
+      enabled: true
+  jackson:
+    default-property-inclusion: always
+
+market:
+  dataset-path: ${MARKET_DATASET_PATH:../data/House_Price_Dataset.csv}
+  ml-api-url: ${ML_API_URL:http://localhost:8000}
+  ml-api-timeout: 5s
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,caches,metrics
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+    operations-sorter: alpha
+  api-docs:
+    path: /v3/api-docs

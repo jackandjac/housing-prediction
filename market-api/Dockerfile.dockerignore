@@ -1,0 +1,6 @@
+**
+!market-api/.mvn/**
+!market-api/mvnw
+!market-api/pom.xml
+!market-api/src/**
+!data/House_Price_Dataset.csv
