@@ -20,7 +20,8 @@ ENV MARKET_DATASET_PATH=/app/data/House_Price_Dataset.csv \
     JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=75"
 EXPOSE 8080
 
+# bash (not sh): /bin/sh in this Ubuntu-based image is dash, which has no /dev/tcp.
 HEALTHCHECK --interval=15s --timeout=3s --start-period=40s --retries=3 \
-    CMD ["sh", "-c", "exec 3<>/dev/tcp/127.0.0.1/8080 && printf 'GET /actuator/health HTTP/1.0\\r\\n\\r\\n' >&3 && grep -q UP <&3"]
+    CMD ["bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8080 && printf 'GET /actuator/health HTTP/1.0\\r\\n\\r\\n' >&3 && grep -q UP <&3"]
 
 ENTRYPOINT ["java", "-jar", "app.jar"]

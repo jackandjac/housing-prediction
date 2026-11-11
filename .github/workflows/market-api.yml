@@ -80,6 +80,9 @@ jobs:
           curl -fs -o report.pdf http://localhost:8080/api/market/export.pdf && head -c 5 report.pdf | grep -q '%PDF-'
           # ml-api is absent here: model-based endpoints must fail cleanly with 503.
           test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/api/market/model-fit)" = 503
+          # The Docker HEALTHCHECK itself must pass (docker compose waits on it before starting the portal).
+          for i in $(seq 1 30); do [ "$(docker inspect -f '{{.State.Health.Status}}' market)" = healthy ] && break; sleep 2; done
+          docker inspect -f '{{.State.Health.Status}}' market | grep -qx healthy
           docker logs market | tail -20
       - name: Build and push (amd64 + arm64)
         if: github.event_name != 'pull_request'

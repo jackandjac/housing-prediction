@@ -43,12 +43,22 @@ py() { # pick the service venv if present (local dev), else the system python (C
   if [[ -x "$ROOT/$1/.venv/bin/python" ]]; then echo "$ROOT/$1/.venv/bin/python"; else command -v python3 || command -v python; fi
 }
 
-start() { # name, workdir, command...
-  local name="$1" dir="$2"
-  shift 2
+port_in_use() { (exec 3<> "/dev/tcp/127.0.0.1/$1") 2> /dev/null; }
+
+start() { # name, port, workdir, command...
+  local name="$1" port="$2" dir="$3"
+  shift 3
   if [[ -e "$PIDS/$name.pid" ]] && kill -0 "$(cat "$PIDS/$name.pid")" 2> /dev/null; then
     echo "$name already running"
     return
+  fi
+  # Something else (e.g. an old Docker container) on the port would pass the health check
+  # and silently serve stale code, so refuse to continue.
+  if port_in_use "$port"; then
+    local var
+    case "$name" in ml-api) var=ML_PORT ;; estimator-api) var=ESTIMATOR_PORT ;; market-api) var=MARKET_PORT ;; *) var=PORTAL_PORT ;; esac
+    echo "✗ port $port is already in use by another process; stop it or pick another port with $var=..." >&2
+    exit 1
   fi
   # setsid (Linux) puts the service in its own process group so `stop` can kill npm/next together.
   local detach=()
@@ -76,22 +86,22 @@ if [[ ! -f "$JAR" ]]; then
   (cd "$ROOT/market-api" && ./mvnw -q -B -DskipTests package)
 fi
 
-start ml-api "$ROOT/ml-api" "$(py ml-api)" -m uvicorn app.main:create_app --factory --host 0.0.0.0 --port "$ML_PORT"
-start estimator-api "$ROOT/estimator-api" env ML_API_URL="http://127.0.0.1:$ML_PORT" \
+start ml-api "$ML_PORT" "$ROOT/ml-api" "$(py ml-api)" -m uvicorn app.main:create_app --factory --host 0.0.0.0 --port "$ML_PORT"
+start estimator-api "$ESTIMATOR_PORT" "$ROOT/estimator-api" env ML_API_URL="http://127.0.0.1:$ML_PORT" \
   "$(py estimator-api)" -m uvicorn app.main:create_app --factory --host 0.0.0.0 --port "$ESTIMATOR_PORT"
-start market-api "$ROOT/market-api" env ML_API_URL="http://127.0.0.1:$ML_PORT" PORT="$MARKET_PORT" \
+start market-api "$MARKET_PORT" "$ROOT/market-api" env ML_API_URL="http://127.0.0.1:$ML_PORT" PORT="$MARKET_PORT" \
   MARKET_DATASET_PATH="$ROOT/data/House_Price_Dataset.csv" "$JAVA_BIN" -jar "$JAR"
 
 export ESTIMATOR_API_URL="http://127.0.0.1:$ESTIMATOR_PORT" MARKET_API_URL="http://127.0.0.1:$MARKET_PORT" \
   ML_API_URL="http://127.0.0.1:$ML_PORT"
 if [[ "$PORTAL_MODE" == "dev" ]]; then
-  start portal "$ROOT/portal" npx next dev -p "$PORTAL_PORT"
+  start portal "$PORTAL_PORT" "$ROOT/portal" npx next dev -p "$PORTAL_PORT"
 else
   if [[ ! -d "$ROOT/portal/.next" || "${REBUILD:-0}" == "1" ]]; then
     echo "building portal..."
     (cd "$ROOT/portal" && npx next build > "$LOGS/portal-build.log" 2>&1) || { tail -n 40 "$LOGS/portal-build.log" >&2; exit 1; }
   fi
-  start portal "$ROOT/portal" npx next start -p "$PORTAL_PORT"
+  start portal "$PORTAL_PORT" "$ROOT/portal" npx next start -p "$PORTAL_PORT"
 fi
 
 wait_for ml-api "http://127.0.0.1:$ML_PORT/health" 60

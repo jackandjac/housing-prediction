@@ -4,8 +4,9 @@ import Link from "next/link";
 import { ContributionChart } from "@/components/charts/ContributionChart";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Feedback";
+import { LocalTime } from "@/components/ui/LocalTime";
 import { MAX_COMPARE, useCompareSelection } from "@/hooks/useCompareSelection";
-import { FEATURE_LABELS, dateTime, featureLabel, money, signedMoney, featureValue } from "@/lib/format";
+import { FEATURE_LABELS, featureLabel, money, signedMoney, featureValue } from "@/lib/format";
 import type { Estimate } from "@/lib/types";
 
 /** An estimate as a table (inputs, market average, effect on price) and a chart. */
@@ -26,7 +27,7 @@ export function EstimateResult({ estimate }: { estimate: Estimate }) {
           <p className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted">
             <Badge tone="accent">{estimate.model_type ?? "model"}</Badge>
             <span className="font-mono">{estimate.model_id}</span>
-            <span>· {dateTime(estimate.created_at)}</span>
+            <span>· <LocalTime iso={estimate.created_at} /></span>
           </p>
         </div>
         <div className="flex flex-wrap gap-2">

@@ -4,10 +4,11 @@ import Link from "next/link";
 import { useState } from "react";
 import { Button, ButtonLink } from "@/components/ui/Button";
 import { Alert, EmptyState } from "@/components/ui/Feedback";
+import { LocalTime } from "@/components/ui/LocalTime";
 import { MAX_COMPARE, useCompareSelection } from "@/hooks/useCompareSelection";
 import { useDeleteEstimate, useEstimateHistory } from "@/hooks/useEstimates";
 import { errorMessage } from "@/lib/errors";
-import { dateTime, money, number } from "@/lib/format";
+import { money, number } from "@/lib/format";
 import type { EstimatePage } from "@/lib/types";
 
 const PAGE_SIZE = 10;
@@ -103,7 +104,9 @@ export function HistoryTable({ initialData }: { initialData: EstimatePage }) {
                     {e.inputs.bedrooms ?? "–"} / {e.inputs.bathrooms ?? "–"}
                   </td>
                   <td className="px-3 py-2 text-right font-semibold">{money(e.predicted_price)}</td>
-                  <td className="px-3 py-2 text-muted">{dateTime(e.created_at)}</td>
+                  <td className="px-3 py-2 text-muted">
+                    <LocalTime iso={e.created_at} />
+                  </td>
                   <td className="px-3 py-2 text-right">
                     {confirmId === e.id ? (
                       <span className="inline-flex gap-1">

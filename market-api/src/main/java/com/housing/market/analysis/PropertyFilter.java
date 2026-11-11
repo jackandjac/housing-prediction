@@ -80,7 +80,7 @@ public record PropertyFilter(SortedMap<String, Range> ranges) implements Predica
         return ranges.isEmpty();
     }
 
-    /** Human-readable description, used in PDF exports. */
+    /** Human-readable description, used in PDF exports (plain words: the PDF's built-in font has no ≥/≤). */
     public String describe() {
         if (ranges.isEmpty()) {
             return "All properties";
@@ -91,9 +91,9 @@ public record PropertyFilter(SortedMap<String, Range> ranges) implements Predica
             if (r.min() != null && r.max() != null) {
                 parts.add(label + " " + fmt(r.min()) + "–" + fmt(r.max()));
             } else if (r.min() != null) {
-                parts.add(label + " ≥ " + fmt(r.min()));
+                parts.add(label + " at least " + fmt(r.min()));
             } else {
-                parts.add(label + " ≤ " + fmt(r.max()));
+                parts.add(label + " at most " + fmt(r.max()));
             }
         });
         return String.join(", ", parts);

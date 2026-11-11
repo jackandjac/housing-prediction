@@ -12,9 +12,6 @@ export const moneyCompact = (v: number) => compactUsd.format(v);
 export const number = (v: number) => num.format(v);
 export const signedMoney = (v: number) => (v > 0 ? "+" : v < 0 ? "−" : "") + usd.format(Math.abs(v));
 
-export function dateTime(iso: string) {
-  return new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" }).format(new Date(iso));
-}
 
 /** "square_footage" -> "Square footage" for columns without a display label. */
 export function humanize(name: string) {

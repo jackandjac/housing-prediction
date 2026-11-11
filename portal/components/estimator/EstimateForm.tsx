@@ -8,6 +8,7 @@ import { Field } from "@/components/ui/Field";
 import { Alert } from "@/components/ui/Feedback";
 import { useCreateEstimate } from "@/hooks/useEstimates";
 import { ApiError } from "@/lib/errors";
+import { number } from "@/lib/format";
 import {
   buildEstimateSchema,
   defaultValues,
@@ -64,7 +65,7 @@ export function EstimateForm({ fields, onEstimate }: { fields: FormField[]; onEs
             min={f.min ?? undefined}
             max={f.max ?? undefined}
             required
-            hint={f.min != null && f.max != null ? `${f.min.toLocaleString()} to ${f.max.toLocaleString()}` : undefined}
+            hint={f.min != null && f.max != null ? `${number(f.min)} to ${number(f.max)}` : undefined}
             error={errors[f.name]?.message}
             {...form.register(f.name)}
           />
