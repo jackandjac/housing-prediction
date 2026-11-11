@@ -27,6 +27,18 @@ Open **http://localhost:8000/docs** for Swagger UI.
 
 On first start, the API trains a model from the bundled `House_Price_Dataset.csv` and makes it active, so `/predict` works straight away. Models, uploads and job history are kept in the `/data` volume and survive restarts.
 
+#### Live demo in GitHub Codespaces
+
+1. On the repo page click **Code → Codespaces → Create codespace on main**.
+2. Wait 2–3 minutes. The first start installs dependencies, then `.devcontainer/start-api.sh` starts the API, and Swagger opens in a new tab.
+3. To share it, open the **PORTS** tab, right-click port **8000**, and choose **Port Visibility → Public**. The start script tries to do this for you. The URL looks like `https://<codespace-name>-8000.app.github.dev/docs`.
+
+Notes:
+- The Codespace stops after 30 minutes without activity. You can raise the timeout to 4 hours at github.com/settings/codespaces.
+- Reopening a stopped Codespace restarts the API automatically, with trained models kept.
+- Logs: `tail -f /tmp/ml-api.log`. Restart by hand: `bash .devcontainer/start-api.sh`.
+- For the webhook demo, run `python ml-api/scripts/webhook_receiver.py` in a terminal and use `callback_url=http://localhost:9000/hook`.
+
 <details>
 <summary>Without Docker</summary>
 

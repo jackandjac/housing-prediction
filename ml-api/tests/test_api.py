@@ -28,6 +28,11 @@ def test_health_reports_bootstrapped_model(client):
     assert body["active_model_id"].startswith("mdl_")
 
 
+def test_root_redirects_to_swagger(client):
+    resp = client.get("/", follow_redirects=False)
+    assert resp.status_code == 307 and resp.headers["location"] == "/docs"
+
+
 def test_bootstrap_disabled_means_no_model(tmp_path):
     with TestClient(create_app(make_settings(tmp_path, bootstrap_data_path=None))) as c:
         assert c.get("/health").json()["model_loaded"] is False

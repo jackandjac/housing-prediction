@@ -14,6 +14,7 @@ from urllib.parse import urlparse
 
 from fastapi import Body, FastAPI, File, Form, HTTPException, Query, Response, UploadFile, status
 from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import RedirectResponse
 
 from .config import Settings
 from .features import build_request_model, load_schema
@@ -270,6 +271,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {"model_id": model.model_id, "count": len(rows), "predictions": model.predict(rows)}
 
     # ---- ops ---------------------------------------------------------------
+
+    @app.get("/", include_in_schema=False)
+    def root() -> RedirectResponse:
+        return RedirectResponse("/docs")
 
     @app.get("/health", tags=["ops"], response_model=HealthResponse, summary="Health check")
     def health() -> dict[str, Any]:
