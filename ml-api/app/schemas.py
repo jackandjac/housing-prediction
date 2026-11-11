@@ -49,6 +49,30 @@ class ModelInfo(ModelSummary):
         description="`per_unit`: price change per +1 unit of each feature (with `intercept`). "
         "`standardized`: change per +1 standard deviation, comparable across features."
     )
+    scaler: dict[str, dict[str, float]] | None = Field(
+        default=None,
+        description="Training mean and standard deviation per feature. Contribution of feature i to a "
+        "prediction = standardized[i] * (x_i - mean[i]) / scale[i]; these sum, with "
+        "`standardized_intercept` (the mean training price), to the prediction. Null for older models.",
+    )
+
+
+class FeatureField(BaseModel):
+    name: str
+    type: str = Field(description="float | int")
+    min: float | None
+    max: float | None
+    description: str
+    example: float | None
+
+
+class FeaturesResponse(BaseModel):
+    model_id: str | None = Field(description="Active model; null when no model is loaded")
+    target: str
+    features: list[FeatureField] = Field(
+        description="Inputs the active model needs, in model order. Without an active model: the schema's "
+        "required features."
+    )
 
 
 class ActivateModelRequest(BaseModel):

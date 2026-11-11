@@ -119,6 +119,7 @@ class TrainingService:
                 "ignored_columns": dataset.ignored_columns,
             },
             "coefficients": result.coefficients,
+            "scaler": result.scaler,
             "metrics": result.metrics,
         }
         self.registry.save(model_id, result.pipeline, metadata)
@@ -174,8 +175,8 @@ class TrainingService:
         self.submit(
             path.read_bytes(),
             filename=path.name,
-            model_type=ModelType.linear,
-            alpha=1.0,
+            model_type=ModelType(self.settings.bootstrap_model_type),
+            alpha=self.settings.bootstrap_alpha,
             callback_url=None,
             run_inline=True,
         )

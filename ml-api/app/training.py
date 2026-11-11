@@ -29,6 +29,8 @@ class TrainingResult:
     pipeline: Pipeline
     coefficients: dict[str, Any]
     metrics: dict[str, Any]
+    scaler: dict[str, dict[str, float]]
+    """Per-feature mean and scale used for standardisation (for contribution breakdowns)."""
 
 
 def _build_pipeline(model_type: ModelType, alpha: float) -> Pipeline:
@@ -77,4 +79,8 @@ def train_model(dataset: ValidatedDataset, model_type: ModelType, alpha: float =
         "cross_validation": {**_scores(y, oof), "folds": folds},
         "rows": n,
     }
-    return TrainingResult(pipeline=pipeline, coefficients=coefficients, metrics=metrics)
+    scaler_stats = {
+        "mean": {f: round(float(m), 6) for f, m in zip(dataset.features, scaler.mean_, strict=True)},
+        "scale": {f: round(float(s), 6) for f, s in zip(dataset.features, scaler.scale_, strict=True)},
+    }
+    return TrainingResult(pipeline=pipeline, coefficients=coefficients, metrics=metrics, scaler=scaler_stats)

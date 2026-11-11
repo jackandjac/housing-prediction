@@ -22,6 +22,7 @@ from .jobs import JobStatus, JobStore
 from .registry import ModelIncompatibleError, ModelNotFoundError, ModelRegistry
 from .schemas import (
     ActivateModelRequest,
+    FeaturesResponse,
     HealthResponse,
     ModelInfo,
     ModelSummary,
@@ -218,6 +219,34 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return model_info(model_id)
         except ModelNotFoundError:
             raise HTTPException(404, f"model {model_id!r} not found") from None
+
+    @app.get(
+        "/features",
+        tags=["models"],
+        response_model=FeaturesResponse,
+        summary="Input fields the active model needs",
+    )
+    def get_features() -> dict[str, Any]:
+        """Lets clients build forms and validation from the live model instead of hard-coding fields.
+        Changes when `PUT /models/active` switches to a model trained on different columns."""
+        active = registry.active
+        names = active.features if active else schema.required_names
+        fields = []
+        for name in names:
+            spec = schema.get(name)
+            if spec is None:  # cannot happen: incompatible models are refused at activation
+                continue
+            fields.append(
+                {
+                    "name": spec.name,
+                    "type": spec.type,
+                    "min": spec.min,
+                    "max": spec.max,
+                    "description": spec.description,
+                    "example": spec.example,
+                }
+            )
+        return {"model_id": active.model_id if active else None, "target": schema.target.name, "features": fields}
 
     # ---- prediction --------------------------------------------------------
 

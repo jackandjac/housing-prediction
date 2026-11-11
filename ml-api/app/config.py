@@ -17,6 +17,8 @@ class Settings:
     features_path: Path
     bootstrap_data_path: Path | None
     """Dataset used to train the first model when none exists yet. None disables it."""
+    bootstrap_model_type: str = "ridge"
+    bootstrap_alpha: float = 1.0
     max_upload_bytes: int = 5 * 1024 * 1024
     min_training_rows: int = 10
     max_batch_size: int = 1000
@@ -35,6 +37,8 @@ class Settings:
             features_path=Path(env.get("FEATURES_PATH", APP_ROOT / "features.yaml")),
             # Unset -> repo default; empty string -> disabled.
             bootstrap_data_path=(_DEFAULT_BOOTSTRAP if bootstrap is None else (Path(bootstrap) if bootstrap else None)),
+            bootstrap_model_type=env.get("BOOTSTRAP_MODEL_TYPE", "ridge"),
+            bootstrap_alpha=float(env.get("BOOTSTRAP_ALPHA", 1.0)),
             max_upload_bytes=int(env.get("MAX_UPLOAD_BYTES", 5 * 1024 * 1024)),
             min_training_rows=int(env.get("MIN_TRAINING_ROWS", 10)),
             max_batch_size=int(env.get("MAX_BATCH_SIZE", 1000)),

@@ -25,7 +25,7 @@ docker run --rm -p 8000:8000 -v ml-data:/data housing-ml-api
 
 Open **http://localhost:8000/docs** for Swagger UI.
 
-On first start, the API trains a model from the bundled `House_Price_Dataset.csv` and makes it active, so `/predict` works straight away. Models, uploads and job history are kept in the `/data` volume and survive restarts.
+On first start, the API trains a Ridge model (alpha=1) from the bundled `House_Price_Dataset.csv` and makes it active, so `/predict` works straight away. Models, uploads and job history are kept in the `/data` volume and survive restarts.
 
 #### Live demo in GitHub Codespaces
 
@@ -47,7 +47,7 @@ cd ml-api
 python3.12 -m venv .venv && source .venv/bin/activate
 pip install -r requirements-dev.txt
 uvicorn app.main:create_app --factory --reload
-pytest            # 29 tests
+pytest
 ```
 </details>
 
@@ -61,7 +61,8 @@ pytest            # 29 tests
 | `GET` | `/models` | List all trained models with metrics and `is_active` |
 | `PUT` | `/models/active` | `{"model_id": "..."}` switches the model that serves predictions |
 | `POST` | `/predict` | One JSON object or an array (batch, up to 1000). Always returns `predictions` in input order. |
-| `GET` | `/model-info` | Coefficients and metrics of the active model (`?model_id=` for any other model) |
+| `GET` | `/model-info` | Coefficients, metrics and per-feature scaler stats of the active model (`?model_id=` for any other model) |
+| `GET` | `/features` | The input fields the active model needs, with type, range and description. Clients build forms and validation from it. |
 | `GET` | `/health` | Liveness check, plus whether a model is loaded |
 
 ### Demo script
@@ -83,7 +84,8 @@ pytest            # 29 tests
   - `per_unit`: dollars per +1 unit of each feature. Together with `intercept`, this reproduces the prediction exactly.
   - `standardized`: dollars per +1 standard deviation, comparable across features.
 
-  The features are strongly correlated (bigger houses are newer and have bigger lots), so individual coefficients can be counter-intuitive. In the current model, for example, square_footage gets a negative coefficient while lot_size picks up the size effect. The predictions are still accurate. Ridge (`model_type=ridge`) makes the coefficients more stable.
+  The features are strongly correlated (bigger houses are newer and have bigger lots). A plain linear fit on this data spreads the size effect unpredictably: it gives square_footage a *negative* coefficient (−$103 per sqft) and lot_size a large positive one. The predictions are still accurate, but the coefficients aren't believable. That's why the default model is **Ridge (alpha=1)**: every coefficient has a sensible sign, and its cross-validated accuracy is slightly *better* (R² 0.9844 vs 0.9835). Set `BOOTSTRAP_MODEL_TYPE=linear` to compare.
+- **Contribution breakdown.** Each model stores the per-feature `mean` and `scale` the scaler learned. A prediction then splits exactly into `standardized_intercept` (the average training price) plus, for each feature, `standardized[i] × (x_i − mean_i) / scale_i`. The portal uses this to show *why* a house is priced above or below average.
 - **Single worker.** uvicorn runs with `--workers 1` because the active model lives in process memory. Scaling out would mean moving the active-model pointer to shared storage and having each worker watch it.
 
 ### Adding a feature later (no code changes)
@@ -113,6 +115,7 @@ Each model remembers its own features, so older models keep working without the 
 | `DATA_DIR` | `/data` (Docker) | models, uploads and the job database |
 | `FEATURES_PATH` | `features.yaml` | feature schema |
 | `BOOTSTRAP_DATA_PATH` | bundled dataset | set it to an empty string to start without a model |
+| `BOOTSTRAP_MODEL_TYPE` / `BOOTSTRAP_ALPHA` | `ridge` / `1.0` | model trained on first start |
 | `MAX_UPLOAD_BYTES` | 5 MB | |
 | `MIN_TRAINING_ROWS` | 10 | |
 | `MAX_BATCH_SIZE` | 1000 | |

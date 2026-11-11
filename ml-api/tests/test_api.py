@@ -50,6 +50,53 @@ def test_model_info_has_coefficients_and_metrics(client):
     assert info["metrics"]["cross_validation"]["r2"] > 0.9
 
 
+def test_bootstrap_model_is_ridge_with_sensible_signs(client):
+    info = client.get("/model-info").json()
+    assert info["model_type"] == "ridge" and info["hyperparameters"] == {"alpha": 1.0}
+    # Bigger houses should not be predicted cheaper (the plain linear fit gets this wrong).
+    assert info["coefficients"]["per_unit"]["square_footage"] > 0
+    assert info["coefficients"]["per_unit"]["bedrooms"] > 0
+
+
+def test_bootstrap_model_type_is_configurable(tmp_path):
+    with TestClient(create_app(make_settings(tmp_path, bootstrap_model_type="linear"))) as c:
+        info = c.get("/model-info").json()
+    assert info["model_type"] == "linear" and info["hyperparameters"] == {}
+
+
+def test_contributions_sum_to_prediction(client):
+    """baseline + sum of per-feature contributions == prediction (what the portal's breakdown chart draws)."""
+    info = client.get("/model-info").json()
+    std, mean, scale = info["coefficients"]["standardized"], info["scaler"]["mean"], info["scaler"]["scale"]
+    contributions = {f: std[f] * (HOUSE[f] - mean[f]) / scale[f] for f in info["features"]}
+    total = info["coefficients"]["standardized_intercept"] + sum(contributions.values())
+    predicted = client.post("/predict", json=HOUSE).json()["predictions"][0]
+    assert total == pytest.approx(predicted, abs=0.05)
+    assert info["coefficients"]["standardized_intercept"] == pytest.approx(264600, abs=1)  # mean price
+
+
+def test_features_endpoint_describes_active_model(client):
+    body = client.get("/features").json()
+    assert body["model_id"] == client.get("/health").json()["active_model_id"]
+    assert body["target"] == "price"
+    assert [f["name"] for f in body["features"]] == list(HOUSE)
+    rating = next(f for f in body["features"] if f["name"] == "school_rating")
+    assert rating == {
+        "name": "school_rating",
+        "type": "float",
+        "min": 0,
+        "max": 10,
+        "description": "Local school rating from 0 to 10",
+        "example": 7.6,
+    }
+
+
+def test_features_without_model_falls_back_to_schema(tmp_path):
+    with TestClient(create_app(make_settings(tmp_path, bootstrap_data_path=None))) as c:
+        body = c.get("/features").json()
+    assert body["model_id"] is None and len(body["features"]) == 7
+
+
 def test_per_unit_coefficients_reproduce_predictions(client):
     info = client.get("/model-info").json()
     c = info["coefficients"]
@@ -296,6 +343,8 @@ def test_new_optional_feature_can_be_added(tmp_path, dataset_bytes):
         new_model = wait_for(c, job["id"])["model_id"]
         c.put("/models/active", json={"model_id": new_model})
 
+        assert "garage_spaces" in [f["name"] for f in c.get("/features").json()["features"]]
+
         missing = c.post("/predict", json=HOUSE)
         assert missing.status_code == 422
         assert missing.json()["detail"]["errors"] == [{"index": 0, "missing": ["garage_spaces"]}]
@@ -303,4 +352,5 @@ def test_new_optional_feature_can_be_added(tmp_path, dataset_bytes):
 
         # Switching back to the old model works.
         assert c.put("/models/active", json={"model_id": old_model}).status_code == 200
+        assert "garage_spaces" not in [f["name"] for f in c.get("/features").json()["features"]]
         assert c.post("/predict", json=HOUSE).status_code == 200
