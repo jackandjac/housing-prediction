@@ -40,6 +40,8 @@ services:
       ESTIMATOR_API_URL: http://estimator-api:8001
       MARKET_API_URL: http://market-api:8080
       ML_API_URL: http://ml-api:8000
+      # Unlocks training and model switching in Model Studio; left empty, Model Studio is view-only.
+      MODEL_ADMIN_TOKEN: ${MODEL_ADMIN_TOKEN:-}
     ports: ["${PORTAL_PORT:-3000}:3000"]
     depends_on:
       estimator-api: { condition: service_healthy }

@@ -9,7 +9,8 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
   try {
     res = await fetch(path, {
       ...init,
-      headers: { accept: "application/json", ...(init?.body ? { "content-type": "application/json" } : {}), ...init?.headers },
+      // JSON bodies only: for FormData the browser must set the multipart content-type (with its boundary).
+      headers: { accept: "application/json", ...(typeof init?.body === "string" ? { "content-type": "application/json" } : {}), ...init?.headers },
     });
   } catch {
     throw new ApiError("You appear to be offline. Check your connection and try again.", 0);

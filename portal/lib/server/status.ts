@@ -1,7 +1,9 @@
 import "server-only";
 import { backends } from "../config";
 
-export type ServiceStatus = { name: string; description: string; state: "up" | "degraded" | "down"; detail?: string };
+import type { ServiceStatus } from "../types";
+
+export type { ServiceStatus };
 
 async function probe(url: string): Promise<{ ok: boolean; body: Record<string, unknown> | null }> {
   try {

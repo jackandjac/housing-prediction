@@ -2,7 +2,7 @@
 
 /*
  * Design tokens. One palette for the whole portal; each app sets its own accent
- * through [data-app] so the two apps feel related but distinguishable.
+ * through [data-app] so the apps feel related but distinguishable.
  * Light values first, dark values under prefers-color-scheme.
  */
 :root {
@@ -40,6 +40,13 @@
   --focus: #5b45c9;
 }
 
+[data-app="models"] {
+  --accent: #b45309;
+  --accent-soft: #fcefdf;
+  --chart-1: #b45309;
+  --focus: #b45309;
+}
+
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #0f1218;
@@ -71,6 +78,12 @@
     --accent-soft: #261f45;
     --chart-1: #a897ff;
     --focus: #a897ff;
+  }
+  [data-app="models"] {
+    --accent: #f4a75e;
+    --accent-soft: #3a2614;
+    --chart-1: #f4a75e;
+    --focus: #f4a75e;
   }
 }
 
