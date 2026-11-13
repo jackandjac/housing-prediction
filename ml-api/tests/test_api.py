@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from app.jobs import JobStatus, JobStore
 from app.main import create_app
 from app.webhook import SIGNATURE_HEADER, sign
 
@@ -23,7 +24,7 @@ def upload(client, content: bytes, **form):
 
 def test_health_reports_bootstrapped_model(client):
     body = client.get("/health").json()
-    assert body["status"] == "ok"
+    assert body["status"] == "ok" and body["database"] == "ok"
     assert body["model_loaded"] is True
     assert body["active_model_id"].startswith("mdl_")
 
@@ -183,7 +184,70 @@ def test_unknown_ids(client):
     assert client.get("/trainings/trn_nope").status_code == 404
     assert client.get("/model-info", params={"model_id": "mdl_nope"}).status_code == 404
     assert client.put("/models/active", json={"model_id": "mdl_nope"}).status_code == 404
-    assert client.put("/models/active", json={"model_id": "../trainings.db"}).status_code == 404
+    assert client.put("/models/active", json={"model_id": "../active_model.json"}).status_code == 404
+
+
+# ---- job store (MongoDB) -----------------------------------------------------------
+
+
+def test_job_history_survives_restart_and_lists_newest_first(settings, dataset_bytes):
+    with TestClient(create_app(settings)) as c:
+        ids = [wait_for(c, upload(c, dataset_bytes).json()["id"])["id"] for _ in range(2)]
+    with TestClient(create_app(settings)) as c:
+        listed = [t["id"] for t in c.get("/trainings").json()]
+        assert listed[:2] == ids[::-1]  # the two uploads, newest first; the bootstrap job is last
+        assert len(listed) == 3
+        assert [t["id"] for t in c.get("/trainings", params={"limit": 1}).json()] == [ids[1]]
+        succeeded = c.get("/trainings", params={"status": "succeeded"}).json()
+        assert len(succeeded) == 3 and all(t["status"] == "succeeded" for t in succeeded)
+        assert c.get("/trainings", params={"status": "failed"}).json() == []
+
+
+def test_unfinished_jobs_are_failed_on_restart(settings):
+    store = JobStore(settings.mongodb_uri, settings.mongodb_db, settings.mongodb_trainings_collection)
+    try:
+        for job_id, status in (("trn_a", JobStatus.submitted), ("trn_b", JobStatus.running)):
+            store.create(
+                {
+                    "id": job_id,
+                    "status": status,
+                    "model_type": "linear",
+                    "dataset_sha256": "x",
+                    "rows": 1,
+                    "features": ["square_footage"],
+                    "ignored_columns": [],
+                    "created_at": "2026-01-01T00:00:00.000Z",
+                }
+            )
+    finally:
+        store.close()
+    with TestClient(create_app(settings)) as c:
+        for job_id in ("trn_a", "trn_b"):
+            job = c.get(f"/trainings/{job_id}").json()
+            assert job["status"] == "failed" and job["error"] == "interrupted by service restart"
+            assert job["features"] == ["square_footage"] and job["activated"] is False
+
+
+def test_predictions_keep_working_when_mongodb_is_down(tmp_path, dataset_bytes):
+    with TestClient(create_app(make_settings(tmp_path))) as c:  # bootstrap a model while MongoDB is up
+        model_id = c.get("/health").json()["active_model_id"]
+    down = make_settings(tmp_path, mongodb_uri="mongodb://user:pw@127.0.0.1:1/", mongodb_timeout_ms=300)
+    uploads = tmp_path / "data" / "uploads"
+    before = sorted(uploads.iterdir())
+    with TestClient(create_app(down)) as c:
+        health = c.get("/health").json()
+        assert health["status"] == "degraded" and health["database"] == "unreachable"
+        assert health["active_model_id"] == model_id
+        assert c.post("/predict", json=HOUSE).status_code == 200
+        for resp in (c.get("/trainings"), c.get("/trainings/trn_x"), upload(c, dataset_bytes)):
+            assert resp.status_code == 503
+            assert "pw" not in resp.text
+    assert sorted(uploads.iterdir()) == before  # the rejected upload was not left on disk
+
+
+def test_missing_mongodb_uri_is_a_startup_error(tmp_path):
+    with pytest.raises(RuntimeError, match="MONGODB_URI"):
+        create_app(make_settings(tmp_path, mongodb_uri=""))
 
 
 # ---- upload validation -------------------------------------------------------------

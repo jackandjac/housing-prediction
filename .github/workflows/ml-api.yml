@@ -24,6 +24,17 @@ env:
 jobs:
   test:
     runs-on: ubuntu-latest
+    services:
+      # Training jobs are stored in a throwaway MongoDB, never the Atlas cluster.
+      mongo:
+        # MongoDB 8.x refuses to start on the runners' Linux 6.19+ kernels; 7.0 has no such check.
+        image: mongo:7.0
+        ports: ["27017:27017"]
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.runCommand({ping:1})'"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      MONGODB_URI: mongodb://localhost:27017
     defaults:
       run:
         working-directory: ml-api
@@ -45,6 +56,15 @@ jobs:
   image:
     needs: test
     runs-on: ubuntu-latest
+    services:
+      # Training jobs are stored in a throwaway MongoDB, never the Atlas cluster.
+      mongo:
+        # MongoDB 8.x refuses to start on the runners' Linux 6.19+ kernels; 7.0 has no such check.
+        image: mongo:7.0
+        ports: ["27017:27017"]
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.runCommand({ping:1})'"
+          --health-interval 5s --health-timeout 5s --health-retries 10
     permissions:
       contents: read
       packages: write
@@ -82,16 +102,18 @@ jobs:
 
       - name: Smoke test container
         run: |
-          docker run -d --name ml-api -p 8000:8000 ml-api:smoke
+          docker run -d --name ml-api --network host -e MONGODB_URI=mongodb://localhost:27017 ml-api:smoke
           for i in $(seq 1 30); do
             curl -fs http://localhost:8000/health && break
             sleep 1
           done
           curl -fs http://localhost:8000/health | grep -q '"model_loaded":true'
+          curl -fs http://localhost:8000/health | grep -q '"database":"ok"'
           curl -fs -X POST http://localhost:8000/predict -H 'Content-Type: application/json' \
             -d '{"square_footage":1550,"bedrooms":3,"bathrooms":2,"year_built":1997,"lot_size":6800,"distance_to_city_center":4.1,"school_rating":7.6}'
           echo
           curl -fs -o /dev/null -w '%{http_code}\n' -F file=@data/House_Price_Dataset.csv http://localhost:8000/trainings | grep -q 202
+          curl -fs http://localhost:8000/trainings | grep -q '"status"'
           docker logs ml-api
 
       - name: Build and push (amd64 + arm64)
