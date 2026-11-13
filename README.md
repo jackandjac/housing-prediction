@@ -172,6 +172,7 @@ Open http://localhost:3000. Swagger: ml-api `:8000/docs`, estimator-api `:8001/d
 Notes:
 - The devcontainer asks for a 4-core machine, which uses free Codespace hours twice as fast as 2 cores.
 - Logs are in `/tmp/housing-logs/`. Restart with `scripts/start-all.sh stop && scripts/start-all.sh`. After pulling new portal code, use `REBUILD=1 scripts/start-all.sh`.
+- To update a running Codespace to the latest `main`: `git pull && bash .devcontainer/setup.sh && scripts/start-all.sh stop && bash .devcontainer/start-api.sh`. `stop` also stops services left over from the Codespace's boot-time start (anything from this repository still listening on the four ports); processes from elsewhere are reported and left running.
 
 ### App 1: Property Value Estimator (`/estimator`, Python backend)
 

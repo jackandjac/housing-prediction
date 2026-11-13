@@ -22,6 +22,28 @@ PORTAL_PORT="${PORTAL_PORT:-3000}"
 PORTAL_MODE="${PORTAL_MODE:-prod}"
 mkdir -p "$LOGS" "$PIDS"
 
+listening_pids() { # port -> pids listening on it (lsof on macOS, ss on Linux)
+  if command -v lsof > /dev/null 2>&1; then
+    lsof -t -iTCP:"$1" -sTCP:LISTEN 2> /dev/null || true
+  elif command -v ss > /dev/null 2>&1; then
+    ss -Hltnp "sport = :$1" 2> /dev/null | grep -o 'pid=[0-9]*' | cut -d= -f2 | sort -u || true
+  fi
+}
+
+proc_cwd() { # pid -> working directory
+  if [[ -e "/proc/$1/cwd" ]]; then
+    readlink "/proc/$1/cwd" 2> /dev/null || true
+  else
+    lsof -a -p "$1" -d cwd -Fn 2> /dev/null | sed -n 's/^n//p' || true
+  fi
+}
+
+any_alive() { # pids... -> success while at least one is still running
+  local p
+  for p in "$@"; do kill -0 "$p" 2> /dev/null && return 0; done
+  return 1
+}
+
 stop() {
   for f in "$PIDS"/*.pid; do
     [[ -e "$f" ]] || continue
@@ -30,6 +52,30 @@ stop() {
     kill -- "-$pid" 2> /dev/null || { pkill -P "$pid" 2> /dev/null; kill "$pid" 2> /dev/null; } || true
     rm -f "$f"
   done
+  # Services can outlive their pid files (e.g. the ones a Codespace starts on boot). Stop whatever
+  # still listens on our ports, but only processes running from this repository: anything else
+  # (Docker Desktop forwarding a container's port, another project) is reported and left alone.
+  local port pid cwd leftovers=()
+  for port in "$ML_PORT" "$ESTIMATOR_PORT" "$MARKET_PORT" "$PORTAL_PORT"; do
+    for pid in $(listening_pids "$port"); do
+      cwd="$(proc_cwd "$pid")"
+      case "$cwd" in
+        "$ROOT" | "$ROOT"/*)
+          kill "$pid" 2> /dev/null || true
+          leftovers+=("$pid")
+          echo "stopped leftover pid $pid on port $port"
+          ;;
+        *) echo "port $port is used by pid $pid outside this repository (${cwd:-unknown}); left running" ;;
+      esac
+    done
+  done
+  if ((${#leftovers[@]})); then
+    for _ in $(seq 1 10); do
+      any_alive "${leftovers[@]}" || break
+      sleep 1
+    done
+    kill -9 "${leftovers[@]}" 2> /dev/null || true # the JVM can take a while to exit
+  fi
   echo "stopped"
 }
 
