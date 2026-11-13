@@ -114,7 +114,7 @@ Each model remembers its own features, so older models keep working without the 
 | Env var | Default | |
 |---|---|---|
 | `MONGODB_URI` | **required** | training job history; credentials are redacted from logs and errors |
-| `MONGODB_DB` / `MONGODB_TRAININGS_COLLECTION` | `housing` / `trainings` | one collection per ml-api instance |
+| `MONGODB_DB` / `MONGODB_TRAININGS_COLLECTION` | `housing` / `trainings` | one collection per ml-api instance; `scripts/start-all.sh` defaults to `trainings` in a Codespace and `trainings_local` elsewhere |
 | `MONGODB_TIMEOUT_MS` | 5000 | server selection timeout |
 | `DATA_DIR` | `/data` (Docker) | model files, uploads and the active-model pointer |
 | `FEATURES_PATH` | `features.yaml` | feature schema |
