@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Suspense } from "react";
-import { Badge, Skeleton } from "@/components/ui/Feedback";
+import { ServiceStatusGrid } from "@/components/layout/ServiceStatusGrid";
+import { Skeleton } from "@/components/ui/Feedback";
 import { getServiceStatus } from "@/lib/server/status";
 
 const APPS = [
@@ -26,6 +27,17 @@ const APPS = [
       { href: "/market/what-if", label: "What-if analysis" },
     ],
   },
+  {
+    href: "/models",
+    app: "models",
+    title: "Model Studio",
+    backend: "Python · FastAPI · scikit-learn",
+    body: "Train new models from your own CSV, compare their accuracy, choose which one serves predictions, and watch the health of every service.",
+    links: [
+      { href: "/models", label: "Models" },
+      { href: "/models/train", label: "Train a model" },
+    ],
+  },
 ] as const;
 
 export default function Home() {
@@ -33,11 +45,11 @@ export default function Home() {
     <div className="mx-auto w-full max-w-6xl px-4 py-10 sm:px-6">
       <h1 className="text-3xl font-semibold tracking-tight text-balance">Housing Insights</h1>
       <p className="mt-2 max-w-prose text-muted">
-        Two applications on one regression model: one values individual properties, the other analyses the market as a
-        whole.
+        Three applications around one regression model: value individual properties, analyse the market as a whole, and
+        train and manage the model itself.
       </p>
 
-      <div className="mt-8 grid gap-4 md:grid-cols-2">
+      <div className="mt-8 grid gap-4 lg:grid-cols-3">
         {APPS.map((a) => (
           <article
             key={a.href}
@@ -76,23 +88,7 @@ export default function Home() {
 }
 
 async function ServiceStatus() {
-  const services = await getServiceStatus();
-  const tone = { up: "positive", degraded: "warning", down: "negative" } as const;
-  const text = { up: "Operational", degraded: "Degraded", down: "Unreachable" } as const;
-  return (
-    <ul className="mt-3 grid gap-3 sm:grid-cols-3">
-      {services.map((s) => (
-        <li key={s.name} className="flex min-w-0 flex-col gap-1 rounded-lg border border-line bg-surface p-4">
-          <div className="flex items-center justify-between gap-2">
-            <span className="font-medium">{s.name}</span>
-            <Badge tone={tone[s.state]}>{text[s.state]}</Badge>
-          </div>
-          <span className="text-xs text-muted">{s.description}</span>
-          {s.detail && <span className="truncate font-mono text-xs text-muted">{s.detail}</span>}
-        </li>
-      ))}
-    </ul>
-  );
+  return <ServiceStatusGrid initial={await getServiceStatus()} />;
 }
 
 function StatusSkeleton() {
