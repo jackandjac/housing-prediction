@@ -8,6 +8,8 @@
 # Ports can be overridden: ML_PORT (8000), ESTIMATOR_PORT (8001), MARKET_PORT (8080), PORTAL_PORT (3000).
 # Requires MONGODB_URI (Codespaces injects it; on a Mac it is read from the Keychain via with-secrets.sh).
 # MODEL_ADMIN_TOKEN (optional) unlocks training in Model Studio; one is generated and printed when unset.
+# MONGODB_TRAININGS_COLLECTION: ml-api's job history; defaults to "trainings" in a Codespace (the demo)
+# and "trainings_local" elsewhere, so a local stack never shares job history with the demo.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -39,6 +41,13 @@ fi
 if [[ -z "${MONGODB_URI:-}" ]]; then
   exec "$ROOT/scripts/with-secrets.sh" "$0" "$@"
 fi
+
+# Job records point at model files on this machine's disk, and ml-api fails another instance's
+# unfinished jobs on startup, so each running stack needs its own collection.
+if [[ -z "${MONGODB_TRAININGS_COLLECTION:-}" ]]; then
+  if [[ -n "${CODESPACE_NAME:-}" ]]; then MONGODB_TRAININGS_COLLECTION=trainings; else MONGODB_TRAININGS_COLLECTION=trainings_local; fi
+fi
+export MONGODB_TRAININGS_COLLECTION
 
 py() { # pick the service venv if present (local dev), else the system python (Codespaces/CI)
   if [[ -x "$ROOT/$1/.venv/bin/python" ]]; then echo "$ROOT/$1/.venv/bin/python"; else command -v python3 || command -v python; fi
@@ -135,6 +144,7 @@ echo "ML API docs:    http://localhost:$ML_PORT/docs"
 echo "Estimator docs: http://localhost:$ESTIMATOR_PORT/docs"
 echo "Market docs:    http://localhost:$MARKET_PORT/swagger-ui.html"
 echo "Logs:           $LOGS"
+echo "Training jobs:  MongoDB collection $MONGODB_TRAININGS_COLLECTION"
 echo
 echo "Model Studio admin token ($TOKEN_SOURCE): $MODEL_ADMIN_TOKEN"
 echo "  (saved in $TOKEN_FILE; needed to train or activate models)"
