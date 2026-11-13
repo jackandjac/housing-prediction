@@ -162,6 +162,23 @@ scripts/with-secrets.sh docker compose up --build
 
 Open http://localhost:3000. Swagger: ml-api `:8000/docs`, estimator-api `:8001/docs`, market-api `:8080/swagger-ui.html`.
 
+#### Running it yourself with a shared database URI
+
+If you were given a MongoDB URI for this project, you need only Docker:
+
+```bash
+git clone https://github.com/jackandjac/housing-prediction.git && cd housing-prediction
+export MONGODB_URI='<the URI you were given>'
+MONGODB_TRAININGS_COLLECTION=trainings_reviewer \
+MONGODB_COLLECTION=estimates_reviewer \
+MODEL_ADMIN_TOKEN=pick-any-token \
+docker compose up --build
+```
+
+Then open http://localhost:3000. The token unlocks training in Model Studio: enter the same value there.
+
+Use your own collection names as shown. The defaults (`trainings`, `estimates`) belong to the live demo. ml-api marks every unfinished job in its collection as failed when it starts, and job records point at model files on that machine's disk, so two stacks must not share a collection. If port 3000 or 8000 is busy, set `PORTAL_PORT` or `ML_PORT`; stop with `docker compose down`.
+
 #### Live demo in GitHub Codespaces
 
 1. Add `MONGODB_URI` as a Codespaces secret for this repository (Settings → Secrets and variables → Codespaces), and allow access from anywhere in MongoDB Atlas *Network Access* (Codespaces have no fixed IP).
