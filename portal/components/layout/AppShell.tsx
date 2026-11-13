@@ -10,7 +10,7 @@ export function AppShell({
   tabs,
   children,
 }: {
-  app: "estimator" | "market";
+  app: "estimator" | "market" | "models";
   title: string;
   backend: string;
   tabs: NavItem[];

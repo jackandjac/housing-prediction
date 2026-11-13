@@ -7,6 +7,7 @@
 #
 # Ports can be overridden: ML_PORT (8000), ESTIMATOR_PORT (8001), MARKET_PORT (8080), PORTAL_PORT (3000).
 # Requires MONGODB_URI (Codespaces injects it; on a Mac it is read from the Keychain via with-secrets.sh).
+# MODEL_ADMIN_TOKEN (optional) unlocks training in Model Studio; one is generated and printed when unset.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -63,7 +64,10 @@ start() { # name, port, workdir, command...
   # setsid (Linux) puts the service in its own process group so `stop` can kill npm/next together.
   local detach=()
   command -v setsid > /dev/null 2>&1 && detach=(setsid)
-  (cd "$dir" && ${detach[@]+"${detach[@]}"} nohup "$@" > "$LOGS/$name.log" 2>&1 < /dev/null & echo $! > "$PIDS/$name.pid")
+  # exec: the service replaces the subshell, so no bash process lingers holding this script's stdout
+  # open (which made `start-all.sh | tail` hang) and the saved pid is the service itself.
+  (cd "$dir" && exec ${detach[@]+"${detach[@]}"} nohup "$@" > "$LOGS/$name.log" 2>&1 < /dev/null) &
+  echo $! > "$PIDS/$name.pid"
 }
 
 wait_for() { # name, url, seconds
@@ -94,6 +98,22 @@ start market-api "$MARKET_PORT" "$ROOT/market-api" env ML_API_URL="http://127.0.
 
 export ESTIMATOR_API_URL="http://127.0.0.1:$ESTIMATOR_PORT" MARKET_API_URL="http://127.0.0.1:$MARKET_PORT" \
   ML_API_URL="http://127.0.0.1:$ML_PORT"
+
+# Model Studio: training and model switching need an admin token. Use MODEL_ADMIN_TOKEN when set
+# (e.g. a Codespaces secret); otherwise reuse the one saved by an earlier run, or generate one.
+# Reusing matters: a portal that is already running keeps the token it started with.
+TOKEN_FILE="$LOGS/model-admin-token"
+if [[ -n "${MODEL_ADMIN_TOKEN:-}" ]]; then
+  TOKEN_SOURCE="from MODEL_ADMIN_TOKEN"
+elif [[ -s "$TOKEN_FILE" ]]; then
+  MODEL_ADMIN_TOKEN="$(cat "$TOKEN_FILE")"
+  TOKEN_SOURCE="saved earlier"
+else
+  MODEL_ADMIN_TOKEN="$(od -An -tx1 -N16 /dev/urandom | tr -d ' \n')"
+  TOKEN_SOURCE="generated"
+fi
+export MODEL_ADMIN_TOKEN
+(umask 077 && printf '%s\n' "$MODEL_ADMIN_TOKEN" > "$TOKEN_FILE")
 if [[ "$PORTAL_MODE" == "dev" ]]; then
   start portal "$PORTAL_PORT" "$ROOT/portal" npx next dev -p "$PORTAL_PORT"
 else
@@ -115,3 +135,6 @@ echo "ML API docs:    http://localhost:$ML_PORT/docs"
 echo "Estimator docs: http://localhost:$ESTIMATOR_PORT/docs"
 echo "Market docs:    http://localhost:$MARKET_PORT/swagger-ui.html"
 echo "Logs:           $LOGS"
+echo
+echo "Model Studio admin token ($TOKEN_SOURCE): $MODEL_ADMIN_TOKEN"
+echo "  (saved in $TOKEN_FILE; needed to train or activate models)"

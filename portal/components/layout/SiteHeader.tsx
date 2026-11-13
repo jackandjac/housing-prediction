@@ -5,6 +5,7 @@ const APPS = [
   { href: "/", label: "Overview", exact: true },
   { href: "/estimator", label: "Value Estimator" },
   { href: "/market", label: "Market Analysis" },
+  { href: "/models", label: "Model Studio" },
 ];
 
 export function SiteHeader() {
