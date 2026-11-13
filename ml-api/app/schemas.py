@@ -86,7 +86,8 @@ class PredictionResponse(BaseModel):
 
 
 class HealthResponse(BaseModel):
-    status: str
+    status: str = Field(description="ok | degraded (MongoDB unreachable: predictions work, training does not)")
+    database: str = Field(description="ok | unreachable")
     model_loaded: bool
     active_model_id: str | None
 

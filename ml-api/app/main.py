@@ -14,11 +14,11 @@ from urllib.parse import urlparse
 
 from fastapi import Body, FastAPI, File, Form, HTTPException, Query, Response, UploadFile, status
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 
 from .config import Settings
 from .features import build_request_model, load_schema
-from .jobs import JobStatus, JobStore
+from .jobs import DatabaseUnavailableError, JobStatus, JobStore
 from .registry import ModelIncompatibleError, ModelNotFoundError, ModelRegistry
 from .schemas import (
     ActivateModelRequest,
@@ -60,21 +60,31 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     schema = load_schema(settings.features_path)
     HouseFeatures = build_request_model(schema)
     settings.data_dir.mkdir(parents=True, exist_ok=True)
+    if not settings.mongodb_uri:
+        raise RuntimeError("MONGODB_URI is not set")
 
-    store = JobStore(settings.db_path)
+    store = JobStore(
+        settings.mongodb_uri, settings.mongodb_db, settings.mongodb_trainings_collection, settings.mongodb_timeout_ms
+    )
     registry = ModelRegistry(settings.models_dir, settings.active_pointer_path, schema)
     service = TrainingService(settings, schema, store, registry)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
-        interrupted = store.fail_interrupted()
-        if interrupted:
-            log.warning("marked %d interrupted training job(s) as failed", interrupted)
         try:
             registry.restore_active()
         except (ModelNotFoundError, ModelIncompatibleError) as exc:
             log.error("could not restore active model: %s", exc)
-        service.bootstrap()
+        # Predictions only need the model files, so a MongoDB outage must not stop the service:
+        # start degraded (/health says so, /trainings returns 503) and let it recover on its own.
+        try:
+            await run_in_threadpool(store.init)
+            interrupted = await run_in_threadpool(store.fail_interrupted)
+            if interrupted:
+                log.warning("marked %d interrupted training job(s) as failed", interrupted)
+            await run_in_threadpool(service.bootstrap)
+        except DatabaseUnavailableError as exc:
+            log.error("MongoDB unavailable at startup; training is disabled until it recovers: %s", exc)
         yield
         service.shutdown()
         store.close()
@@ -93,6 +103,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.settings = settings
     app.state.service = service
     app.state.registry = registry
+    app.state.store = store
+
+    @app.exception_handler(DatabaseUnavailableError)
+    async def database_unavailable(_request, exc: DatabaseUnavailableError) -> JSONResponse:
+        log.error("MongoDB error: %s", exc)  # already redacted
+        return JSONResponse(status_code=503, content={"detail": "the training job database is unavailable"})
 
     def model_info(model_id: str) -> dict[str, Any]:
         meta = registry.metadata(model_id)
@@ -110,6 +126,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         responses={
             413: {"description": "File too large"},
             422: {"model": ValidationErrorResponse, "description": "Invalid training data"},
+            503: {"description": "Training job database (MongoDB) unavailable"},
         },
     )
     async def submit_training(
@@ -163,7 +180,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         tags=["training"],
         response_model=TrainingJob,
         summary="Get the status of a training job",
-        responses={404: {"description": "Unknown training id"}},
+        responses={404: {"description": "Unknown training id"}, 503: {"description": "Database unavailable"}},
     )
     def get_training(training_id: str) -> dict[str, Any]:
         job = store.get(training_id)
@@ -307,9 +324,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/health", tags=["ops"], response_model=HealthResponse, summary="Health check")
     def health() -> dict[str, Any]:
+        """Always 200 while the process is up; `status` is `degraded` when MongoDB is unreachable
+        (predictions still work, training does not)."""
         active = registry.active
+        db_ok = store.ping()
         return {
-            "status": "ok",
+            "status": "ok" if db_ok else "degraded",
+            "database": "ok" if db_ok else "unreachable",
             "model_loaded": active is not None,
             "active_model_id": active.model_id if active else None,
         }

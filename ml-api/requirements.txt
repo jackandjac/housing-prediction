@@ -8,3 +8,4 @@ numpy==2.5.4
 joblib==1.6.0
 PyYAML==6.0.3
 httpx==0.28.1
+pymongo==4.19.0

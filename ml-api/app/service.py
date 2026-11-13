@@ -10,7 +10,7 @@ from typing import Any
 
 from .config import Settings
 from .features import Schema
-from .jobs import JobStatus, JobStore, utcnow
+from .jobs import DatabaseUnavailableError, JobStatus, JobStore, utcnow
 from .registry import ModelRegistry
 from .training import ModelType, train_model
 from .validation import ValidatedDataset, validate_training_csv
@@ -48,27 +48,32 @@ class TrainingService:
         callback_url: str | None,
         run_inline: bool = False,
     ) -> dict[str, Any]:
-        """Validate synchronously, then queue the job. Raises DatasetValidationError."""
+        """Validate synchronously, then queue the job. Raises DatasetValidationError or DatabaseUnavailableError."""
         dataset = validate_training_csv(content, self.schema, self.settings.min_training_rows)
 
         job_id = new_id("trn")
-        (self.settings.uploads_dir / f"{job_id}.csv").write_bytes(content)
-        job = self.store.create(
-            {
-                "id": job_id,
-                "status": JobStatus.submitted,
-                "model_type": model_type.value,
-                "alpha": alpha if model_type is ModelType.ridge else None,
-                "source_filename": filename,
-                "dataset_sha256": hashlib.sha256(content).hexdigest(),
-                "rows": dataset.rows,
-                "features": dataset.features,
-                "ignored_columns": dataset.ignored_columns,
-                "callback_url": callback_url,
-                "created_at": utcnow(),
-                "webhook_status": "pending" if callback_url else None,
-            }
-        )
+        upload = self.settings.uploads_dir / f"{job_id}.csv"
+        upload.write_bytes(content)
+        try:
+            job = self.store.create(
+                {
+                    "id": job_id,
+                    "status": JobStatus.submitted,
+                    "model_type": model_type.value,
+                    "alpha": alpha if model_type is ModelType.ridge else None,
+                    "source_filename": filename,
+                    "dataset_sha256": hashlib.sha256(content).hexdigest(),
+                    "rows": dataset.rows,
+                    "features": dataset.features,
+                    "ignored_columns": dataset.ignored_columns,
+                    "callback_url": callback_url,
+                    "created_at": utcnow(),
+                    "webhook_status": "pending" if callback_url else None,
+                }
+            )
+        except DatabaseUnavailableError:
+            upload.unlink(missing_ok=True)
+            raise
         if run_inline:
             self._run(job_id, dataset)
         else:
@@ -90,10 +95,18 @@ class TrainingService:
             self._train(job_id, dataset)
         except Exception as exc:  # noqa: BLE001 - every failure must end up on the job record
             log.exception("training job %s failed", job_id)
-            self.store.update(
-                job_id, status=JobStatus.failed, error=f"{type(exc).__name__}: {exc}", finished_at=utcnow()
-            )
-        self._notify(job_id)
+            try:
+                self.store.update(
+                    job_id, status=JobStatus.failed, error=f"{type(exc).__name__}: {exc}", finished_at=utcnow()
+                )
+            except DatabaseUnavailableError as db_exc:
+                # The job stays "running" in the database; the next restart marks it as interrupted.
+                log.error("could not record failure of job %s: %s", job_id, db_exc)
+                return
+        try:
+            self._notify(job_id)
+        except DatabaseUnavailableError as exc:
+            log.error("could not send or record the webhook for job %s: %s", job_id, exc)
 
     def _train(self, job_id: str, dataset: ValidatedDataset) -> None:
         job = self.store.get(job_id)

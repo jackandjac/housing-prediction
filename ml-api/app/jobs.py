@@ -1,14 +1,23 @@
-"""Persistent store for training jobs (SQLite)."""
+"""Persistent store for training jobs (MongoDB).
+
+One document per job, keyed by the job id (``_id``). Timestamps are kept as the
+same ISO-8601 "...Z" strings the API returns: they sort correctly as text, so
+the response format did not change when the store moved from SQLite to MongoDB.
+
+The sync driver is used on purpose: the endpoints are sync and training runs in
+a thread pool. ``MongoClient`` is thread-safe and pools its own connections.
+"""
 
 from __future__ import annotations
 
-import json
-import sqlite3
-import threading
+import re
 from datetime import UTC, datetime
 from enum import StrEnum
-from pathlib import Path
 from typing import Any
+
+import pymongo
+from pymongo import ASCENDING, DESCENDING, MongoClient
+from pymongo.errors import PyMongoError
 
 
 class JobStatus(StrEnum):
@@ -18,11 +27,20 @@ class JobStatus(StrEnum):
     failed = "failed"
 
 
+class DatabaseUnavailableError(Exception):
+    """MongoDB could not be reached or rejected the operation (message is redacted)."""
+
+
 def utcnow() -> str:
     return datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
-_COLUMNS = (
+def redact(text: object) -> str:
+    """Strip credentials from driver error messages before they reach logs or responses."""
+    return re.sub(r"//[^@/\s]+@", "//***@", str(text))
+
+
+FIELDS = (
     "id",
     "status",
     "model_type",
@@ -43,102 +61,94 @@ _COLUMNS = (
     "webhook_attempts",
     "webhook_last_error",
 )
-_JSON_COLUMNS = {"features", "ignored_columns"}
+_DEFAULTS: dict[str, Any] = {"features": [], "ignored_columns": [], "activated": False, "webhook_attempts": 0}
+_NEWEST_FIRST = [("created_at", DESCENDING), ("_id", DESCENDING)]  # _id breaks millisecond ties
 
-_SCHEMA = """
-CREATE TABLE IF NOT EXISTS trainings (
-    id TEXT PRIMARY KEY,
-    status TEXT NOT NULL,
-    model_type TEXT NOT NULL,
-    alpha REAL,
-    source_filename TEXT,
-    dataset_sha256 TEXT NOT NULL,
-    rows INTEGER NOT NULL,
-    features TEXT NOT NULL,
-    ignored_columns TEXT NOT NULL,
-    callback_url TEXT,
-    created_at TEXT NOT NULL,
-    started_at TEXT,
-    finished_at TEXT,
-    error TEXT,
-    model_id TEXT,
-    activated INTEGER NOT NULL DEFAULT 0,
-    webhook_status TEXT,
-    webhook_attempts INTEGER NOT NULL DEFAULT 0,
-    webhook_last_error TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_trainings_created ON trainings(created_at);
-"""
+
+def _to_api(doc: dict[str, Any]) -> dict[str, Any]:
+    out = {f: doc.get(f, _DEFAULTS.get(f)) for f in FIELDS if f != "id"}
+    out["id"] = doc["_id"]
+    return out
 
 
 class JobStore:
-    def __init__(self, db_path: Path):
-        db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(db_path, check_same_thread=False, isolation_level=None)
-        self._conn.row_factory = sqlite3.Row
-        self._lock = threading.Lock()
-        with self._lock:
-            self._conn.execute("PRAGMA journal_mode=WAL")
-            self._conn.executescript(_SCHEMA)
+    def __init__(self, uri: str, db: str, collection: str, timeout_ms: int = 5000):
+        # Lazy connect: constructing the client does no network I/O.
+        self._client: MongoClient = MongoClient(uri, serverSelectionTimeoutMS=timeout_ms, appname="housing-ml-api")
+        self._coll = self._client[db][collection]
+
+    def _call(self, fn, *args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except PyMongoError as exc:
+            raise DatabaseUnavailableError(redact(exc)) from None
+
+    def init(self) -> None:
+        """Create indexes (idempotent). Raises DatabaseUnavailableError if MongoDB is unreachable."""
+        self._call(self._coll.create_index, _NEWEST_FIRST, name="newest_first")
+        self._call(
+            self._coll.create_index,
+            [("status", ASCENDING), *_NEWEST_FIRST],
+            name="status_newest_first",
+        )
 
     def close(self) -> None:
-        with self._lock:
-            self._conn.close()
+        self._client.close()
 
-    @staticmethod
-    def _to_dict(row: sqlite3.Row) -> dict[str, Any]:
-        d = dict(row)
-        for c in _JSON_COLUMNS:
-            d[c] = json.loads(d[c]) if d[c] is not None else []
-        d["activated"] = bool(d["activated"])
-        return d
+    def ping(self, timeout: float = 1.5) -> bool:
+        """Quick reachability check for /health; bounded so the container health check never times out."""
+        try:
+            with pymongo.timeout(timeout):
+                self._client.admin.command("ping")
+            return True
+        except PyMongoError:
+            return False
+
+    def drop(self) -> None:
+        """Delete the whole collection (tests only)."""
+        self._call(self._coll.drop)
 
     def create(self, job: dict[str, Any]) -> dict[str, Any]:
-        values = {c: job.get(c) for c in _COLUMNS}
-        for c in _JSON_COLUMNS:
-            values[c] = json.dumps(values[c] or [])
-        values["activated"] = int(bool(values["activated"]))
-        values["webhook_attempts"] = values["webhook_attempts"] or 0
-        cols = ", ".join(_COLUMNS)
-        marks = ", ".join(f":{c}" for c in _COLUMNS)
-        with self._lock:
-            self._conn.execute(f"INSERT INTO trainings ({cols}) VALUES ({marks})", values)
-        return self.get(job["id"])  # type: ignore[return-value]
+        doc = {f: job.get(f, _DEFAULTS.get(f)) for f in FIELDS if f != "id"}
+        doc["_id"] = job["id"]
+        doc["status"] = str(doc["status"])
+        doc["activated"] = bool(doc["activated"])
+        doc["webhook_attempts"] = doc["webhook_attempts"] or 0
+        doc["features"] = list(doc["features"] or [])
+        doc["ignored_columns"] = list(doc["ignored_columns"] or [])
+        self._call(self._coll.insert_one, doc)
+        return _to_api(doc)
 
     def update(self, job_id: str, **fields: Any) -> None:
-        unknown = set(fields) - set(_COLUMNS)
+        unknown = set(fields) - (set(FIELDS) - {"id"})
         if unknown:
-            raise ValueError(f"unknown column(s): {unknown}")
-        for c in _JSON_COLUMNS & fields.keys():
-            fields[c] = json.dumps(fields[c])
+            raise ValueError(f"unknown field(s): {unknown}")
+        if "status" in fields:
+            fields["status"] = str(fields["status"])
         if "activated" in fields:
-            fields["activated"] = int(bool(fields["activated"]))
-        assignments = ", ".join(f"{k} = :{k}" for k in fields)
-        with self._lock:
-            self._conn.execute(f"UPDATE trainings SET {assignments} WHERE id = :_id", {**fields, "_id": job_id})
+            fields["activated"] = bool(fields["activated"])
+        self._call(self._coll.update_one, {"_id": job_id}, {"$set": fields})
 
     def get(self, job_id: str) -> dict[str, Any] | None:
-        with self._lock:
-            row = self._conn.execute("SELECT * FROM trainings WHERE id = ?", (job_id,)).fetchone()
-        return self._to_dict(row) if row else None
+        doc = self._call(self._coll.find_one, {"_id": job_id})
+        return _to_api(doc) if doc else None
 
     def list(self, limit: int = 100, status: JobStatus | None = None) -> list[dict[str, Any]]:
-        query = "SELECT * FROM trainings"
-        params: list[Any] = []
-        if status:
-            query += " WHERE status = ?"
-            params.append(status.value)
-        query += " ORDER BY created_at DESC LIMIT ?"
-        params.append(limit)
-        with self._lock:
-            rows = self._conn.execute(query, params).fetchall()
-        return [self._to_dict(r) for r in rows]
+        query = {"status": status.value} if status else {}
+        docs = self._call(lambda: list(self._coll.find(query).sort(_NEWEST_FIRST).limit(limit)))
+        return [_to_api(d) for d in docs]
 
     def fail_interrupted(self) -> int:
         """Mark jobs left unfinished by a previous process as failed."""
-        with self._lock:
-            cur = self._conn.execute(
-                "UPDATE trainings SET status = ?, error = ?, finished_at = ? WHERE status IN (?, ?)",
-                (JobStatus.failed, "interrupted by service restart", utcnow(), JobStatus.submitted, JobStatus.running),
-            )
-        return cur.rowcount
+        result = self._call(
+            self._coll.update_many,
+            {"status": {"$in": [JobStatus.submitted.value, JobStatus.running.value]}},
+            {
+                "$set": {
+                    "status": JobStatus.failed.value,
+                    "error": "interrupted by service restart",
+                    "finished_at": utcnow(),
+                }
+            },
+        )
+        return result.modified_count

@@ -13,7 +13,7 @@ _DEFAULT_BOOTSTRAP = APP_ROOT.parent / "data" / "House_Price_Dataset.csv"
 @dataclass(frozen=True)
 class Settings:
     data_dir: Path
-    """Where models, uploads and the job database are stored (mount a volume here)."""
+    """Where models and uploads are stored (mount a volume here). Training jobs live in MongoDB."""
     features_path: Path
     bootstrap_data_path: Path | None
     """Dataset used to train the first model when none exists yet. None disables it."""
@@ -27,6 +27,11 @@ class Settings:
     webhook_timeout_seconds: float = 5.0
     webhook_max_attempts: int = 3
     webhook_backoff_seconds: float = 1.0
+    mongodb_uri: str = ""
+    mongodb_db: str = "housing"
+    mongodb_trainings_collection: str = "trainings"
+    mongodb_timeout_ms: int = 5000
+    """Give each ml-api instance its own collection: job records point at model files in that instance's DATA_DIR."""
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -47,6 +52,10 @@ class Settings:
             webhook_timeout_seconds=float(env.get("WEBHOOK_TIMEOUT_SECONDS", 5)),
             webhook_max_attempts=int(env.get("WEBHOOK_MAX_ATTEMPTS", 3)),
             webhook_backoff_seconds=float(env.get("WEBHOOK_BACKOFF_SECONDS", 1)),
+            mongodb_uri=env.get("MONGODB_URI", ""),
+            mongodb_db=env.get("MONGODB_DB", "housing"),
+            mongodb_trainings_collection=env.get("MONGODB_TRAININGS_COLLECTION", "trainings"),
+            mongodb_timeout_ms=int(env.get("MONGODB_TIMEOUT_MS", 5000)),
         )
 
     @property
@@ -56,10 +65,6 @@ class Settings:
     @property
     def uploads_dir(self) -> Path:
         return self.data_dir / "uploads"
-
-    @property
-    def db_path(self) -> Path:
-        return self.data_dir / "trainings.db"
 
     @property
     def active_pointer_path(self) -> Path:

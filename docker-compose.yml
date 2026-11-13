@@ -10,6 +10,10 @@ services:
   ml-api:
     build: { context: ., dockerfile: ml-api/Dockerfile }
     image: ghcr.io/jackandjac/housing-prediction-ml-api:latest
+    environment:
+      MONGODB_URI: ${MONGODB_URI:?MONGODB_URI must be set (see scripts/with-secrets.sh)}
+      # Training job history; model files stay in the ml-data volume.
+      MONGODB_TRAININGS_COLLECTION: ${MONGODB_TRAININGS_COLLECTION:-trainings}
     ports: ["${ML_PORT:-8000}:8000"]
     volumes: [ml-data:/data]
 

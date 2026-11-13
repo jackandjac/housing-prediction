@@ -4,7 +4,7 @@ Monorepo for the full-stack interview tasks.
 
 | Path | What | Status |
 |---|---|---|
-| [`ml-api/`](ml-api/) | **Task 1**: FastAPI + scikit-learn regression API with async training, a model registry and webhooks | ✅ |
+| [`ml-api/`](ml-api/) | **Task 1**: FastAPI + scikit-learn regression API with async training (job history in MongoDB), a model registry and webhooks | ✅ |
 | [`portal/`](portal/) | **Task 2**: Next.js 16 portal hosting both apps | ✅ |
 | [`estimator-api/`](estimator-api/) | **Task 2, App 1** backend: FastAPI + MongoDB | ✅ |
 | [`market-api/`](market-api/) | **Task 2, App 2** backend: Java 21 + Spring Boot 3.4.4 | ✅ |
@@ -16,18 +16,23 @@ Monorepo for the full-stack interview tasks.
 
 ### Run it
 
+Training job history is stored in MongoDB, so the container needs `MONGODB_URI`. Use the Atlas cluster through `scripts/with-secrets.sh`, or a throwaway local MongoDB:
+
 ```bash
+docker run -d --name mongo -p 27017:27017 mongo:7.0      # throwaway MongoDB (skip if using Atlas)
+
 # Pre-built image from GitHub Actions (amd64 + arm64)
-docker run --rm -p 8000:8000 -v ml-data:/data ghcr.io/jackandjac/housing-prediction-ml-api:latest
+docker run --rm -p 8000:8000 -v ml-data:/data -e MONGODB_URI=mongodb://host.docker.internal:27017 \
+  ghcr.io/jackandjac/housing-prediction-ml-api:latest
 
 # or build locally (from the repo root)
 docker build -f ml-api/Dockerfile -t housing-ml-api .
-docker run --rm -p 8000:8000 -v ml-data:/data housing-ml-api
+docker run --rm -p 8000:8000 -v ml-data:/data -e MONGODB_URI=mongodb://host.docker.internal:27017 housing-ml-api
 ```
 
 Open **http://localhost:8000/docs** for Swagger UI.
 
-On first start, the API trains a Ridge model (alpha=1) from the bundled `House_Price_Dataset.csv` and makes it active, so `/predict` works straight away. Models, uploads and job history are kept in the `/data` volume and survive restarts.
+On first start, the API trains a Ridge model (alpha=1) from the bundled `House_Price_Dataset.csv` and makes it active, so `/predict` works straight away. Models and uploads are kept in the `/data` volume and training job history in MongoDB, so both survive restarts.
 
 #### Live demo in GitHub Codespaces
 
@@ -40,8 +45,9 @@ The Codespace runs the whole stack (all four services). See [Live demo](#live-de
 cd ml-api
 python3.12 -m venv .venv && source .venv/bin/activate
 pip install -r requirements-dev.txt
+export MONGODB_URI=mongodb://localhost:27017       # or: ../scripts/with-secrets.sh <command>
 uvicorn app.main:create_app --factory --reload
-pytest
+pytest                                                # each test uses its own collection and drops it
 ```
 </details>
 
@@ -72,6 +78,7 @@ pytest
 
 - **Training is separate from serving.** Training runs in a background worker pool and never blocks prediction requests. Each model is saved as `models/<id>/model.joblib` plus `metadata.json`, which records the features, the dataset's SHA-256, coefficients and metrics, so you can always trace which data produced the model that's serving.
 - **Promotion is explicit.** Only the very first model is activated automatically. Later models are listed and must be promoted with `PUT /models/active`, so training never changes production predictions on its own. The active model is swapped atomically in memory, and the choice is written to disk so it survives restarts.
+- **Job history in MongoDB, model files on disk.** Training jobs are documents keyed by their id in `housing.trainings`, indexed for newest-first listing with or without a status filter. Model files (`model.joblib`, `metadata.json`) and the active-model pointer stay in `DATA_DIR`: they are binary artifacts read on every restart, and predictions keep working from them while MongoDB is down. In that case `/health` reports `degraded` / `database: unreachable` and the `/trainings` endpoints return 503 until it recovers. On startup, jobs still `submitted` or `running` from a previous process are marked `failed` ("interrupted by service restart"), which is why each ml-api instance needs its own collection (`MONGODB_TRAININGS_COLLECTION`). Job records also refer to model files that exist only in that instance's `DATA_DIR`.
 - **Webhooks.** When a job finishes, the API sends `POST callback_url` with the event, ids and metrics. Failed deliveries are retried with exponential backoff (3 attempts). Each payload is signed with HMAC-SHA256 in `X-Webhook-Signature` when `WEBHOOK_SECRET` is set. A failed webhook never fails the training; delivery status is recorded on the job.
 - **Metrics.** The dataset has only 50 rows, so a single train/test split would be noisy. `cross_validation` pools out-of-fold predictions from k-fold (k ≤ 5); that's the honest estimate of accuracy on new data. `training` is the fit on all rows.
 - **Coefficients** are reported two ways:
@@ -106,7 +113,10 @@ Each model remembers its own features, so older models keep working without the 
 
 | Env var | Default | |
 |---|---|---|
-| `DATA_DIR` | `/data` (Docker) | models, uploads and the job database |
+| `MONGODB_URI` | **required** | training job history; credentials are redacted from logs and errors |
+| `MONGODB_DB` / `MONGODB_TRAININGS_COLLECTION` | `housing` / `trainings` | one collection per ml-api instance |
+| `MONGODB_TIMEOUT_MS` | 5000 | server selection timeout |
+| `DATA_DIR` | `/data` (Docker) | model files, uploads and the active-model pointer |
 | `FEATURES_PATH` | `features.yaml` | feature schema |
 | `BOOTSTRAP_DATA_PATH` | bundled dataset | set it to an empty string to start without a model |
 | `BOOTSTRAP_MODEL_TYPE` / `BOOTSTRAP_ALPHA` | `ridge` / `1.0` | model trained on first start |
@@ -120,7 +130,7 @@ Each model remembers its own features, so older models keep working without the 
 ### CI/CD
 
 On every push or PR that touches `ml-api/` or `data/`, [`.github/workflows/ml-api.yml`](.github/workflows/ml-api.yml) runs:
-1. ruff (lint and format checks) and pytest on Python 3.12.
+1. ruff (lint and format checks) and pytest on Python 3.12, against a `mongo:7.0` service container.
 2. A Docker build, then a smoke test against the running container: health, predict, and a training upload.
 3. On `main` only: a multi-arch (amd64 + arm64) image pushed to `ghcr.io/jackandjac/housing-prediction-ml-api`, tagged `latest` and with the short commit SHA.
 
@@ -132,10 +142,10 @@ On every push or PR that touches `ml-api/` or `data/`, [`.github/workflows/ml-ap
 Browser ──► portal (Next.js :3000)
               │  server components + route handlers call the backends server-side;
               │  the browser never talks to a backend directly (no CORS, backend URLs stay private)
-              ├──► estimator-api (FastAPI :8001) ──► MongoDB Atlas
+              ├──► estimator-api (FastAPI :8001) ──► MongoDB Atlas (estimates)
               │          └──────────────┐
               └──► market-api (Spring Boot :8080)
-                         └──────────────┴──► ml-api (Task 1, :8000)
+                         └──────────────┴──► ml-api (Task 1, :8000) ──► MongoDB Atlas (trainings)
 ```
 
 ### Run everything
@@ -208,7 +218,7 @@ Notes:
 
 | Service | Tests | CI (`.github/workflows/`) |
 |---|---|---|
-| ml-api | pytest (35) | lint, test, container smoke test, multi-arch image |
+| ml-api | pytest (39) against a real MongoDB (a service container in CI, a throwaway collection per test locally) | lint, test, container smoke test, multi-arch image |
 | estimator-api | pytest against a real MongoDB (a service container in CI, a throwaway collection locally), ml-api faked with `httpx.MockTransport` | same |
 | market-api | JUnit 5 + MockMvc + `MockRestServiceServer` (expected statistics checked against pandas) | `mvn verify`, container smoke test, image |
 | portal | ESLint, TypeScript, vitest (form schema and URL filters), production build with no backends | same, plus a container smoke test |
