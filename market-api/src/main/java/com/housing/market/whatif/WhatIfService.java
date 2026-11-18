@@ -24,8 +24,10 @@ import com.housing.market.ml.MlModels;
  * What-if analysis and model fit, both backed by ml-api batch predictions.
  *
  * <p>Caching is done with the Cache API directly (not {@code @Cacheable}) so the response can say
- * whether it was served from cache, and so the active model id is part of the key: switching models
- * in ml-api never returns predictions from the previous model.
+ * whether it was served from cache, and so the model id is part of the key. Lookups use the cached
+ * active-model id; results are stored under the id ml-api reports with the predictions, so an entry
+ * never holds another model's results. Right after a switch, lookups can still use the previous id
+ * for up to the active-model cache TTL (20 s) and return that model's cached results.
  */
 @Service
 public class WhatIfService {
@@ -43,15 +45,19 @@ public class WhatIfService {
     }
 
     public WhatIfResponse analyse(WhatIfRequest req) {
-        String modelId = ml.activeModelId();
-        String key = modelId + "|" + req;
-        WhatIfResponse hit = whatIfCache.get(key, WhatIfResponse.class);
+        WhatIfResponse hit = whatIfCache.get(whatIfKey(ml.activeModelId(), req), WhatIfResponse.class);
         if (hit != null) {
             return hit.withCached(true);
         }
         WhatIfResponse fresh = compute(req, ml.features());
-        whatIfCache.put(key, fresh);
+        // Store under the model that actually answered: for up to the active-model cache TTL after a
+        // switch, the id we looked up with can be the previous model's.
+        whatIfCache.put(whatIfKey(fresh.modelId(), req), fresh);
         return fresh;
+    }
+
+    private static String whatIfKey(String modelId, WhatIfRequest req) {
+        return modelId + "|" + req;
     }
 
     private WhatIfResponse compute(WhatIfRequest req, MlModels.Features features) {
@@ -140,7 +146,7 @@ public class WhatIfService {
         }
         ModelFit fit = new ModelFit(prediction.modelId(), props.size(), Stats.round(abs / props.size()),
                 Stats.round(Math.sqrt(sq / props.size())), points, false);
-        modelFitCache.put(modelId, fit);
+        modelFitCache.put(fit.modelId(), fit); // the model that answered, as in analyse()
         return fit;
     }
 
