@@ -2,8 +2,10 @@ package com.housing.market.web;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 import static org.hamcrest.Matchers.hasItem;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -133,7 +135,44 @@ class MarketControllerTest {
 
         mvc.perform(get("/api/market/cache-stats"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$[?(@.name == 'whatIf')].hits").value(hasItem(1)));
+                // Counters are cumulative across tests (clear() doesn't reset them), so check for at least one.
+                .andExpect(jsonPath("$[?(@.name == 'whatIf')].hits").value(hasItem(greaterThanOrEqualTo(1))));
+    }
+
+    /** Answers like the fake model but reports a different model id, as ml-api does right after a switch. */
+    private static org.mockito.stubbing.Answer<MlModels.Prediction> predictAs(String modelId) {
+        return inv -> {
+            MlModels.Prediction p = fakePredict(inv);
+            return new MlModels.Prediction(modelId, p.count(), p.predictions());
+        };
+    }
+
+    @Test
+    void resultsAreCachedUnderTheModelThatProducedThem() throws Exception {
+        String body = """
+                {"base": %s, "vary": "square_footage", "from": 1000, "to": 2000, "steps": 3}""".formatted(BASE);
+        // Just after a switch to mdl_b: our cached active-model id still says mdl_a, ml-api already answers as mdl_b.
+        doAnswer(predictAs("mdl_b")).when(ml).predict(anyList());
+        mvc.perform(post("/api/market/what-if").contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(jsonPath("$.modelId").value("mdl_b"));
+        mvc.perform(get("/api/market/model-fit")).andExpect(jsonPath("$.modelId").value("mdl_b"));
+
+        // Once the id cache catches up, those results are found under mdl_b.
+        when(ml.activeModelId()).thenReturn("mdl_b");
+        mvc.perform(post("/api/market/what-if").contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(jsonPath("$.cached").value(true));
+        mvc.perform(get("/api/market/model-fit")).andExpect(jsonPath("$.cached").value(true));
+        verify(ml, times(2)).predict(anyList());
+
+        // Switching back to mdl_a must not serve mdl_b's results from the mdl_a entry.
+        when(ml.activeModelId()).thenReturn("mdl_a");
+        doAnswer(predictAs("mdl_a")).when(ml).predict(anyList());
+        mvc.perform(post("/api/market/what-if").contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(jsonPath("$.cached").value(false))
+                .andExpect(jsonPath("$.modelId").value("mdl_a"));
+        mvc.perform(get("/api/market/model-fit"))
+                .andExpect(jsonPath("$.cached").value(false))
+                .andExpect(jsonPath("$.modelId").value("mdl_a"));
     }
 
     @Test
